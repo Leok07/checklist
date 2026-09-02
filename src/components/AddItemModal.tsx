@@ -11,14 +11,13 @@ interface AddItemModalProps {
 }
 
 const QUICK_SUGGESTIONS: { name: string; categoryId: CategoryId; assignedTo: PersonAssignment }[] = [
-  { name: 'Óculos de sol', categoryId: 'praia', assignedTo: 'ambos' },
-  { name: 'Chinelo ou sandália', categoryId: 'praia', assignedTo: 'ambos' },
+  { name: 'Óculos de sol', categoryId: 'praia', assignedTo: 'leeo' },
+  { name: 'Chinelo ou sandália', categoryId: 'praia', assignedTo: 'marii' },
   { name: 'Caixa térmica / cooler', categoryId: 'praticidade', assignedTo: 'leeo' },
-  { name: 'Chapéu ou boné', categoryId: 'praia', assignedTo: 'ambos' },
-  { name: 'Repelente', categoryId: 'saude_docs', assignedTo: 'ambos' },
+  { name: 'Chapéu ou boné', categoryId: 'praia', assignedTo: 'marii' },
+  { name: 'Repelente', categoryId: 'saude_docs', assignedTo: 'leeo' },
   { name: 'Bateria portátil (Powerbank)', categoryId: 'praticidade', assignedTo: 'leeo' },
   { name: 'Kit de maquiagem / skincare', categoryId: 'higiene', assignedTo: 'marii' },
-  { name: 'Kit primeiros socorros', categoryId: 'saude_docs', assignedTo: 'ambos' },
   { name: 'Secador / prancha', categoryId: 'higiene', assignedTo: 'marii' },
 ];
 
@@ -26,7 +25,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
   isOpen,
   onClose,
   onAdd,
-  initialAssignedTo = 'ambos',
+  initialAssignedTo = 'leeo',
 }) => {
   const [name, setName] = useState('');
   const [category, setCategory] = useState<CategoryId>('praia');
@@ -42,7 +41,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
     } else {
       setName('');
       setCategory('praia');
-      setAssignedTo('ambos');
+      setAssignedTo('leeo');
     }
   }, [isOpen, initialAssignedTo]);
 
@@ -75,7 +74,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
               <Plus className="w-4 h-4" />
             </div>
             <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
-              Adicionar Novo Item
+              Adicionar Item
             </h3>
           </div>
           <button
@@ -102,48 +101,36 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             />
           </div>
 
-          {/* Quem vai levar? (Meio a meio) */}
+          {/* Quem vai levar? Apenas Leeo ou Marii */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
-              De quem é este item?
+              Quem vai levar?
             </label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
                 onClick={() => setAssignedTo('leeo')}
-                className={`flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-bold border transition min-h-[44px] ${
+                className={`flex items-center justify-center gap-2 py-3 px-3 rounded-xl text-sm font-bold border transition min-h-[44px] ${
                   assignedTo === 'leeo'
                     ? 'bg-sky-600 text-white border-sky-600 shadow-sm shadow-sky-500/30'
                     : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-sky-400'
                 }`}
               >
-                <User className="w-3.5 h-3.5" />
+                <User className="w-4 h-4" />
                 <span>Leeo</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setAssignedTo('marii')}
-                className={`flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-bold border transition min-h-[44px] ${
+                className={`flex items-center justify-center gap-2 py-3 px-3 rounded-xl text-sm font-bold border transition min-h-[44px] ${
                   assignedTo === 'marii'
                     ? 'bg-violet-600 text-white border-violet-600 shadow-sm shadow-violet-500/30'
                     : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-violet-400'
                 }`}
               >
-                <User className="w-3.5 h-3.5" />
+                <User className="w-4 h-4" />
                 <span>Marii</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAssignedTo('ambos')}
-                className={`flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-bold border transition min-h-[44px] ${
-                  assignedTo === 'ambos'
-                    ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 shadow-sm'
-                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-slate-400'
-                }`}
-              >
-                <span>Ambos</span>
               </button>
             </div>
           </div>

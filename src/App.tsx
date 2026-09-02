@@ -1,18 +1,14 @@
 import { useState, useMemo } from 'react';
 import { useChecklist } from './hooks/useChecklist';
 import { useTheme } from './hooks/useTheme';
-import { CategoryId, FilterStatus, ViewMode, PersonAssignment } from './types/checklist';
+import { CategoryId, FilterStatus, PersonAssignment } from './types/checklist';
 import { CATEGORIES } from './data/defaultItems';
 import { Header } from './components/Header';
-import { ProgressBar } from './components/ProgressBar';
-import { SplitViewToggle } from './components/SplitViewToggle';
-import { CategoryFilter } from './components/CategoryFilter';
 import { ItemCard } from './components/ItemCard';
 import { AddItemModal } from './components/AddItemModal';
 import { ActionToolbar } from './components/ActionToolbar';
-import { EmptyState } from './components/EmptyState';
 import { Toast } from './components/Toast';
-import { Waves, Plus, User } from 'lucide-react';
+import { Waves, Plus, Search, X } from 'lucide-react';
 
 export function App() {
   const {
@@ -35,74 +31,28 @@ export function App() {
 
   const { theme, toggleTheme } = useTheme();
 
-  // Estados locais de interface
-  const [viewMode, setViewMode] = useState<ViewMode>('split');
+  // Estados de busca e filtro
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('all');
   const [selectedCategory, setSelectedCategory] = useState<CategoryId | 'all'>('all');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [modalInitialPerson, setModalInitialPerson] = useState<PersonAssignment>('ambos');
+  const [modalTargetPerson, setModalTargetPerson] = useState<PersonAssignment>('leeo');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
   };
 
-  // Contagem de itens por categoria
-  const categoryCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: items.length };
-    CATEGORIES.forEach((cat) => {
-      counts[cat.id] = items.filter((item) => item.categoryId === cat.id).length;
-    });
-    return counts;
-  }, [items]);
+  const handleOpenAdd = (person: PersonAssignment) => {
+    setModalTargetPerson(person);
+    setIsAddModalOpen(true);
+  };
 
-  // Itens filtrados com base em busca, status e categoria
-  const baseFilteredItems = useMemo(() => {
-    return items.filter((item) => {
-      // Filtro de Categoria
-      if (selectedCategory !== 'all' && item.categoryId !== selectedCategory) {
-        return false;
-      }
-
-      // Filtro de Status
-      if (statusFilter === 'pending' && item.completed) {
-        return false;
-      }
-      if (statusFilter === 'completed' && !item.completed) {
-        return false;
-      }
-
-      // Filtro de Busca
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase().trim();
-        const matchesName = item.name.toLowerCase().includes(query);
-        const cat = CATEGORIES.find((c) => c.id === item.categoryId);
-        const matchesCategory = cat?.label.toLowerCase().includes(query);
-        const matchesPerson =
-          (item.assignedTo === 'leeo' && 'leeo'.includes(query)) ||
-          (item.assignedTo === 'marii' && 'marii'.includes(query)) ||
-          (item.assignedTo === 'ambos' && 'ambos'.includes(query));
-        if (!matchesName && !matchesCategory && !matchesPerson) {
-          return false;
-        }
-      }
-
-      return true;
-    });
-  }, [items, selectedCategory, statusFilter, searchQuery]);
-
-  // Ações de usuário
   const handleAddItem = (name: string, categoryId: CategoryId, assignedTo: PersonAssignment) => {
     const success = addItem(name, categoryId, assignedTo);
     if (success) {
-      showToast(`Item "${name}" adicionado.`);
+      showToast(`Item "${name}" adicionado para ${assignedTo === 'leeo' ? 'Leeo' : 'Marii'}.`);
     }
-  };
-
-  const handleOpenAddModal = (person: PersonAssignment = 'ambos') => {
-    setModalInitialPerson(person);
-    setIsAddModalOpen(true);
   };
 
   const handleCopyList = async () => {
@@ -121,21 +71,43 @@ export function App() {
     }
   };
 
-  // Listas divididas para Meio a Meio
+  // Filtragem
+  const filterItems = (list: typeof items) => {
+    return list.filter((item) => {
+      if (selectedCategory !== 'all' && item.categoryId !== selectedCategory) {
+        return false;
+      }
+      if (statusFilter === 'pending' && item.completed) {
+        return false;
+      }
+      if (statusFilter === 'completed' && !item.completed) {
+        return false;
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matchesName = item.name.toLowerCase().includes(q);
+        const cat = CATEGORIES.find((c) => c.id === item.categoryId);
+        const matchesCat = cat?.label.toLowerCase().includes(q);
+        if (!matchesName && !matchesCat) return false;
+      }
+      return true;
+    });
+  };
+
   const leeoItems = useMemo(() => {
-    return baseFilteredItems.filter((i) => i.assignedTo === 'leeo' || i.assignedTo === 'ambos');
-  }, [baseFilteredItems]);
+    return filterItems(items.filter((i) => i.assignedTo === 'leeo'));
+  }, [items, selectedCategory, statusFilter, searchQuery]);
 
   const mariiItems = useMemo(() => {
-    return baseFilteredItems.filter((i) => i.assignedTo === 'marii' || i.assignedTo === 'ambos');
-  }, [baseFilteredItems]);
+    return filterItems(items.filter((i) => i.assignedTo === 'marii'));
+  }, [items, selectedCategory, statusFilter, searchQuery]);
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F17] text-slate-800 dark:text-slate-100 flex flex-col justify-between transition-colors duration-200 selection:bg-ocean-500 selection:text-white">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 w-full pb-24 sm:pb-16">
-        {/* Cabeçalho */}
+      <div className="max-w-6xl mx-auto px-3 sm:px-6 w-full pb-20 sm:pb-16">
+        {/* Cabeçalho Limpo */}
         <Header
-          onOpenAddModal={() => handleOpenAddModal('ambos')}
+          onOpenAddModal={() => handleOpenAdd('leeo')}
           onCopyList={handleCopyList}
           theme={theme}
           onToggleTheme={toggleTheme}
@@ -145,284 +117,216 @@ export function App() {
           onForceSync={forceSyncToCloud}
         />
 
-        {/* Barra de Progresso com Métricas Individuais */}
-        <ProgressBar
-          total={stats.total}
-          completed={stats.completed}
-          pending={stats.pending}
-          percent={stats.progressPercent}
-          leeoStats={stats.leeo}
-          mariiStats={stats.marii}
-        />
-
-        {/* Seletor Meio a Meio (Leeo vs Marii) */}
-        <SplitViewToggle
-          currentView={viewMode}
-          onViewChange={setViewMode}
-          leeoPercent={stats.leeo.progressPercent}
-          mariiPercent={stats.marii.progressPercent}
-        />
-
-        {/* Barra de Filtros e Busca */}
-        <CategoryFilter
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          statusFilter={statusFilter}
-          onStatusChange={setStatusFilter}
-          selectedCategory={selectedCategory}
-          onCategorySelect={setSelectedCategory}
-          categoryCounts={categoryCounts}
-        />
-
-        {/* Conteúdo Principal do Checklist */}
-        <main className="space-y-6">
-          {baseFilteredItems.length === 0 ? (
-            <EmptyState
-              isSearch={Boolean(searchQuery.trim())}
-              onClearSearch={() => setSearchQuery('')}
-              onOpenAddModal={() => handleOpenAddModal('ambos')}
+        {/* Barra Compacta de Busca e Filtros Rápidos */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 mb-5 text-xs">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Pesquisar itens..."
+              className="w-full pl-9 pr-8 py-2 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ocean-500/20"
             />
-          ) : viewMode === 'split' ? (
-            /* Modo Meio a Meio: Duas Colunas Lado a Lado no Desktop / Empilhadas no Mobile */
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-              {/* Coluna do Leeo */}
-              <section className="bg-sky-50/30 dark:bg-sky-950/10 rounded-2xl p-4 sm:p-5 border border-sky-100 dark:border-sky-900/40 space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-sky-100 dark:border-sky-900/40">
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Filtro Status */}
+            <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700">
+              <button
+                onClick={() => setStatusFilter('all')}
+                className={`px-3 py-1.5 rounded-lg font-medium transition ${
+                  statusFilter === 'all'
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                Todos
+              </button>
+              <button
+                onClick={() => setStatusFilter('pending')}
+                className={`px-3 py-1.5 rounded-lg font-medium transition ${
+                  statusFilter === 'pending'
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                Pendentes
+              </button>
+              <button
+                onClick={() => setStatusFilter('completed')}
+                className={`px-3 py-1.5 rounded-lg font-medium transition ${
+                  statusFilter === 'completed'
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                Prontos
+              </button>
+            </div>
+
+            {/* Filtro Categoria */}
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value as any)}
+              className="py-1.5 px-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-700 dark:text-slate-300 font-medium"
+            >
+              <option value="all">Todas Categorias</option>
+              {CATEGORIES.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* TELA MEIO A MEIO (DIRETO AO PONTO COM DIVISOR CENTRAL) */}
+        <main className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-200 dark:divide-slate-800">
+            
+            {/* LADO ESQUERDO: LEEO */}
+            <section className="p-4 sm:p-5 flex flex-col">
+              {/* Topo Leeo */}
+              <div className="pb-4 border-b border-slate-100 dark:border-slate-800/80 mb-4">
+                <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center font-bold text-xs shadow-sm shadow-sky-500/30">
-                      <User className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-sky-950 dark:text-sky-200">
-                        Lado do Leeo
-                      </h3>
-                      <span className="text-[11px] text-sky-700 dark:text-sky-400">
-                        {stats.leeo.completed} de {stats.leeo.total} itens prontos ({stats.leeo.progressPercent}%)
-                      </span>
-                    </div>
+                    <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-sky-700 dark:text-sky-400">
+                      Leeo
+                    </h2>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+                      {stats.leeo.completed}/{stats.leeo.total} itens
+                    </span>
                   </div>
                   <button
-                    onClick={() => handleOpenAddModal('leeo')}
-                    className="px-2.5 py-1 text-xs font-semibold text-sky-700 dark:text-sky-300 bg-sky-100 dark:bg-sky-900/60 hover:bg-sky-200 rounded-lg transition flex items-center gap-1"
+                    onClick={() => handleOpenAdd('leeo')}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 active:scale-95 rounded-xl transition shadow-sm shadow-sky-500/20"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    Adicionar
+                    <span>Adicionar</span>
                   </button>
                 </div>
 
-                <div className="space-y-2">
-                  {leeoItems.length === 0 ? (
-                    <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
-                      Nenhum item atribuído ao Leeo nesta busca.
-                    </p>
-                  ) : (
-                    leeoItems.map((item) => (
-                      <ItemCard
-                        key={item.id}
-                        item={item}
-                        onToggle={toggleItem}
-                        onRemove={removeItem}
-                        onEdit={editItem}
-                        onReassign={reassignItem}
-                      />
-                    ))
-                  )}
+                {/* Barra Leeo */}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-2 bg-sky-100 dark:bg-sky-950 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-sky-500 transition-all duration-300 rounded-full"
+                      style={{ width: `${stats.leeo.progressPercent}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-bold text-sky-700 dark:text-sky-400 shrink-0">
+                    {stats.leeo.progressPercent}%
+                  </span>
                 </div>
-              </section>
+              </div>
 
-              {/* Coluna da Marii */}
-              <section className="bg-violet-50/30 dark:bg-violet-950/10 rounded-2xl p-4 sm:p-5 border border-violet-100 dark:border-violet-900/40 space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-violet-100 dark:border-violet-900/40">
+              {/* Lista Leeo */}
+              <div className="space-y-2 flex-1">
+                {leeoItems.length === 0 ? (
+                  <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-8">
+                    Nenhum item para o Leeo.
+                  </p>
+                ) : (
+                  leeoItems.map((item) => (
+                    <ItemCard
+                      key={item.id}
+                      item={item}
+                      onToggle={toggleItem}
+                      onRemove={removeItem}
+                      onEdit={editItem}
+                      onReassign={reassignItem}
+                    />
+                  ))
+                )}
+              </div>
+            </section>
+
+            {/* LADO DIREITO: MARII */}
+            <section className="p-4 sm:p-5 flex flex-col">
+              {/* Topo Marii */}
+              <div className="pb-4 border-b border-slate-100 dark:border-slate-800/80 mb-4">
+                <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-xl bg-violet-600 text-white flex items-center justify-center font-bold text-xs shadow-sm shadow-violet-500/30">
-                      <User className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-violet-950 dark:text-violet-200">
-                        Lado da Marii
-                      </h3>
-                      <span className="text-[11px] text-violet-700 dark:text-violet-400">
-                        {stats.marii.completed} de {stats.marii.total} itens prontos ({stats.marii.progressPercent}%)
-                      </span>
-                    </div>
+                    <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-violet-700 dark:text-violet-400">
+                      Marii
+                    </h2>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                      {stats.marii.completed}/{stats.marii.total} itens
+                    </span>
                   </div>
                   <button
-                    onClick={() => handleOpenAddModal('marii')}
-                    className="px-2.5 py-1 text-xs font-semibold text-violet-700 dark:text-violet-300 bg-violet-100 dark:bg-violet-900/60 hover:bg-violet-200 rounded-lg transition flex items-center gap-1"
+                    onClick={() => handleOpenAdd('marii')}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-violet-600 hover:bg-violet-700 active:scale-95 rounded-xl transition shadow-sm shadow-violet-500/20"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    Adicionar
+                    <span>Adicionar</span>
                   </button>
                 </div>
 
-                <div className="space-y-2">
-                  {mariiItems.length === 0 ? (
-                    <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
-                      Nenhum item atribuído à Marii nesta busca.
-                    </p>
-                  ) : (
-                    mariiItems.map((item) => (
-                      <ItemCard
-                        key={item.id}
-                        item={item}
-                        onToggle={toggleItem}
-                        onRemove={removeItem}
-                        onEdit={editItem}
-                        onReassign={reassignItem}
-                      />
-                    ))
-                  )}
+                {/* Barra Marii */}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-2 bg-violet-100 dark:bg-violet-950 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-violet-500 transition-all duration-300 rounded-full"
+                      style={{ width: `${stats.marii.progressPercent}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-bold text-violet-700 dark:text-violet-400 shrink-0">
+                    {stats.marii.progressPercent}%
+                  </span>
                 </div>
-              </section>
-            </div>
-          ) : viewMode === 'leeo' ? (
-            /* Foco Exclusivo: Lado do Leeo */
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800">
-                <div className="flex items-center gap-2.5">
-                  <User className="w-5 h-5 text-sky-600 dark:text-sky-400" />
-                  <div>
-                    <h3 className="text-sm font-bold text-sky-950 dark:text-sky-200">
-                      Mala do Leeo (Itens individuais + compartilhados)
-                    </h3>
-                    <span className="text-xs text-sky-700 dark:text-sky-400">
-                      {stats.leeo.completed} de {stats.leeo.total} itens prontos
-                    </span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleOpenAddModal('leeo')}
-                  className="px-3 py-1.5 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-700 rounded-lg transition flex items-center gap-1"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Novo item
-                </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {leeoItems.map((item) => (
-                  <ItemCard
-                    key={item.id}
-                    item={item}
-                    onToggle={toggleItem}
-                    onRemove={removeItem}
-                    onEdit={editItem}
-                    onReassign={reassignItem}
-                  />
-                ))}
+              {/* Lista Marii */}
+              <div className="space-y-2 flex-1">
+                {mariiItems.length === 0 ? (
+                  <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-8">
+                    Nenhum item para a Marii.
+                  </p>
+                ) : (
+                  mariiItems.map((item) => (
+                    <ItemCard
+                      key={item.id}
+                      item={item}
+                      onToggle={toggleItem}
+                      onRemove={removeItem}
+                      onEdit={editItem}
+                      onReassign={reassignItem}
+                    />
+                  ))
+                )}
               </div>
-            </div>
-          ) : viewMode === 'marii' ? (
-            /* Foco Exclusivo: Lado da Marii */
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 rounded-xl bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800">
-                <div className="flex items-center gap-2.5">
-                  <User className="w-5 h-5 text-violet-600 dark:text-violet-400" />
-                  <div>
-                    <h3 className="text-sm font-bold text-violet-950 dark:text-violet-200">
-                      Mala da Marii (Itens individuais + compartilhados)
-                    </h3>
-                    <span className="text-xs text-violet-700 dark:text-violet-400">
-                      {stats.marii.completed} de {stats.marii.total} itens prontos
-                    </span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleOpenAddModal('marii')}
-                  className="px-3 py-1.5 text-xs font-semibold text-white bg-violet-600 hover:bg-violet-700 rounded-lg transition flex items-center gap-1"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Novo item
-                </button>
-              </div>
+            </section>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {mariiItems.map((item) => (
-                  <ItemCard
-                    key={item.id}
-                    item={item}
-                    onToggle={toggleItem}
-                    onRemove={removeItem}
-                    onEdit={editItem}
-                    onReassign={reassignItem}
-                  />
-                ))}
-              </div>
-            </div>
-          ) : (
-            /* Visão Geral: Agrupada por Categorias */
-            CATEGORIES.map((cat) => {
-              const itemsInCat = baseFilteredItems.filter((i) => i.categoryId === cat.id);
-              if (itemsInCat.length === 0) return null;
-
-              const completedInCat = itemsInCat.filter((i) => i.completed).length;
-
-              return (
-                <section key={cat.id} className="space-y-2">
-                  <div className="flex items-center justify-between px-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-200 tracking-tight">
-                        {cat.label}
-                      </h3>
-                      <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
-                        ({completedInCat}/{itemsInCat.length})
-                      </span>
-                    </div>
-                    <span className="text-xs text-slate-400 dark:text-slate-500 hidden sm:inline">
-                      {cat.description}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-2.5">
-                    {itemsInCat.map((item) => (
-                      <ItemCard
-                        key={item.id}
-                        item={item}
-                        onToggle={toggleItem}
-                        onRemove={removeItem}
-                        onEdit={editItem}
-                        onReassign={reassignItem}
-                      />
-                    ))}
-                  </div>
-                </section>
-              );
-            })
-          )}
+          </div>
         </main>
 
-        {/* Barra de Ações em Massa */}
-        {items.length > 0 && (
-          <div className="mt-6">
-            <ActionToolbar
-              onCheckAll={checkAll}
-              onUncheckAll={uncheckAll}
-              onResetToDefaults={resetToDefaults}
-              totalItems={stats.total}
-              filteredCount={baseFilteredItems.length}
-            />
-          </div>
-        )}
+        {/* Ações em Massa */}
+        <ActionToolbar
+          onCheckAll={checkAll}
+          onUncheckAll={uncheckAll}
+          onResetToDefaults={resetToDefaults}
+          totalItems={stats.total}
+          filteredCount={leeoItems.length + mariiItems.length}
+        />
       </div>
 
-      {/* Botão Flutuante Rápido no Mobile (FAB) */}
-      <div className="sm:hidden fixed bottom-5 right-5 z-40">
-        <button
-          onClick={() => handleOpenAddModal('ambos')}
-          aria-label="Adicionar novo item"
-          className="w-14 h-14 rounded-full bg-ocean-600 text-white flex items-center justify-center shadow-xl shadow-ocean-600/40 active:scale-95 transition"
-        >
-          <Plus className="w-6 h-6" />
-        </button>
-      </div>
-
-      {/* Rodapé */}
-      <footer className="border-t border-slate-200/70 dark:border-slate-800/80 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
-        <div className="flex items-center justify-center gap-2 mb-1">
+      {/* Rodapé Minimalista */}
+      <footer className="border-t border-slate-200/70 dark:border-slate-800/80 py-5 text-center text-xs text-slate-400 dark:text-slate-500">
+        <div className="flex items-center justify-center gap-1.5 mb-1">
           <Waves className="w-4 h-4 text-ocean-500" />
-          <span className="font-semibold text-slate-600 dark:text-slate-300">Checklist de Praia - Leeo e Marii</span>
+          <span className="font-semibold text-slate-700 dark:text-slate-300">Checklist de Praia</span>
         </div>
-        <p>Sincronização em tempo real entre dispositivos. Dados salvos com segurança.</p>
+        <p>Leeo e Marii</p>
       </footer>
 
       {/* Modal de Adição */}
@@ -430,10 +334,10 @@ export function App() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onAdd={handleAddItem}
-        initialAssignedTo={modalInitialPerson}
+        initialAssignedTo={modalTargetPerson}
       />
 
-      {/* Notificação Toast */}
+      {/* Toast */}
       <Toast
         message={toastMessage}
         onClose={() => setToastMessage(null)}

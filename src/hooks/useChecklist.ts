@@ -3,21 +3,30 @@ import { ChecklistItem, CategoryId, PersonAssignment } from '../types/checklist'
 import { INITIAL_ITEMS, CATEGORIES } from '../data/defaultItems';
 import { isFirebaseConfigured, subscribeToChecklist, saveChecklistToCloud } from '../services/firebase';
 
-const STORAGE_KEY = 'checklist_praia_itens_v2';
+const STORAGE_KEY = 'checklist_praia_itens_v3';
 
 function normalizeItems(rawItems: any[]): ChecklistItem[] {
-  return rawItems.map((item) => ({
-    ...item,
-    assignedTo: (item.assignedTo === 'leeo' || item.assignedTo === 'marii' || item.assignedTo === 'ambos')
-      ? item.assignedTo
-      : 'ambos',
-  }));
+  return rawItems.map((item, index) => {
+    let assignedTo: PersonAssignment = 'leeo';
+    if (item.assignedTo === 'marii') {
+      assignedTo = 'marii';
+    } else if (item.assignedTo === 'leeo') {
+      assignedTo = 'leeo';
+    } else {
+      // Se era 'ambos' ou indefinido, distribui equilibradamente
+      assignedTo = index % 2 === 0 ? 'leeo' : 'marii';
+    }
+    return {
+      ...item,
+      assignedTo,
+    };
+  });
 }
 
 export function useChecklist() {
   const [items, setItems] = useState<ChecklistItem[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem('checklist_praia_itens_v1');
+      const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem('checklist_praia_itens_v2') || localStorage.getItem('checklist_praia_itens_v1');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -25,7 +34,7 @@ export function useChecklist() {
         }
       }
     } catch {
-      // Usa a lista padrão
+      // Usa lista padrão
     }
     return INITIAL_ITEMS;
   });
@@ -97,7 +106,7 @@ export function useChecklist() {
   }, [items]);
 
   const addItem = useCallback(
-    (name: string, categoryId: CategoryId = 'geral', assignedTo: PersonAssignment = 'ambos') => {
+    (name: string, categoryId: CategoryId = 'geral', assignedTo: PersonAssignment = 'leeo') => {
       const trimmed = name.trim();
       if (!trimmed) return false;
 
@@ -140,7 +149,7 @@ export function useChecklist() {
               ...item,
               name: trimmed,
               categoryId: newCategory || item.categoryId,
-              assignedTo: newAssignedTo || item.assignedTo || 'ambos',
+              assignedTo: newAssignedTo || item.assignedTo,
             };
           }
           return item;
@@ -151,18 +160,22 @@ export function useChecklist() {
     []
   );
 
-  const reassignItem = useCallback((id: string, assignedTo: PersonAssignment) => {
+  const reassignItem = useCallback((id: string) => {
     setItems((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, assignedTo } : item
-      )
+      prev.map((item) => {
+        if (item.id === id) {
+          const nextAssigned: PersonAssignment = item.assignedTo === 'leeo' ? 'marii' : 'leeo';
+          return { ...item, assignedTo: nextAssigned };
+        }
+        return item;
+      })
     );
   }, []);
 
-  const checkAll = useCallback((personFilter?: PersonAssignment | 'all') => {
+  const checkAll = useCallback((person?: PersonAssignment) => {
     setItems((prev) =>
       prev.map((item) => {
-        if (!personFilter || personFilter === 'all' || item.assignedTo === personFilter || item.assignedTo === 'ambos') {
+        if (!person || item.assignedTo === person) {
           return { ...item, completed: true };
         }
         return item;
@@ -170,10 +183,10 @@ export function useChecklist() {
     );
   }, []);
 
-  const uncheckAll = useCallback((personFilter?: PersonAssignment | 'all') => {
+  const uncheckAll = useCallback((person?: PersonAssignment) => {
     setItems((prev) =>
       prev.map((item) => {
-        if (!personFilter || personFilter === 'all' || item.assignedTo === personFilter || item.assignedTo === 'ambos') {
+        if (!person || item.assignedTo === person) {
           return { ...item, completed: false };
         }
         return item;
@@ -191,14 +204,14 @@ export function useChecklist() {
     const pending = total - completed;
     const progressPercent = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-    // Métricas Leeo (Itens exclusivos de Leeo + compartilhados)
-    const leeoItems = items.filter((i) => i.assignedTo === 'leeo' || i.assignedTo === 'ambos');
+    // Métricas do Leeo
+    const leeoItems = items.filter((i) => i.assignedTo === 'leeo');
     const leeoCompleted = leeoItems.filter((i) => i.completed).length;
     const leeoPending = leeoItems.length - leeoCompleted;
     const leeoPercent = leeoItems.length > 0 ? Math.round((leeoCompleted / leeoItems.length) * 100) : 0;
 
-    // Métricas Marii (Itens exclusivos de Marii + compartilhados)
-    const mariiItems = items.filter((i) => i.assignedTo === 'marii' || i.assignedTo === 'ambos');
+    // Métricas da Marii
+    const mariiItems = items.filter((i) => i.assignedTo === 'marii');
     const mariiCompleted = mariiItems.filter((i) => i.completed).length;
     const mariiPending = mariiItems.length - mariiCompleted;
     const mariiPercent = mariiItems.length > 0 ? Math.round((mariiCompleted / mariiItems.length) * 100) : 0;
@@ -225,29 +238,26 @@ export function useChecklist() {
 
   const exportAsText = useCallback(() => {
     const lines: string[] = [];
-    lines.push('CHECKLIST DE VIAGEM - PRAIA (LEEO E MARII)');
-    lines.push(`Geral: ${stats.completed}/${stats.total} prontos (${stats.progressPercent}%)`);
-    lines.push(`Lado do Leeo: ${stats.leeo.completed}/${stats.leeo.total} prontos (${stats.leeo.progressPercent}%)`);
-    lines.push(`Lado da Marii: ${stats.marii.completed}/${stats.marii.total} prontos (${stats.marii.progressPercent}%)`);
+    lines.push('CHECKLIST DE PRAIA - LEEO E MARII');
+    lines.push(`Total: ${stats.completed}/${stats.total} itens prontos (${stats.progressPercent}%)`);
     lines.push('----------------------------------------');
 
-    const sections: { label: string; filter: (i: ChecklistItem) => boolean }[] = [
-      { label: 'LADO DO LEEO', filter: (i) => i.assignedTo === 'leeo' },
-      { label: 'LADO DA MARII', filter: (i) => i.assignedTo === 'marii' },
-      { label: 'COMPARTILHADO (AMBOS)', filter: (i) => i.assignedTo === 'ambos' },
-    ];
+    lines.push('');
+    lines.push(`[ LEEO - ${stats.leeo.completed}/${stats.leeo.total} prontos (${stats.leeo.progressPercent}%) ]`);
+    const leeoItems = items.filter((i) => i.assignedTo === 'leeo');
+    leeoItems.forEach((item) => {
+      const mark = item.completed ? '[X]' : '[ ]';
+      const cat = CATEGORIES.find((c) => c.id === item.categoryId)?.label || '';
+      lines.push(`${mark} ${item.name} (${cat})`);
+    });
 
-    sections.forEach(({ label, filter }) => {
-      const sectionItems = items.filter(filter);
-      if (sectionItems.length > 0) {
-        lines.push('');
-        lines.push(`[ ${label} ]`);
-        sectionItems.forEach((item) => {
-          const mark = item.completed ? '[X]' : '[ ]';
-          const cat = CATEGORIES.find((c) => c.id === item.categoryId)?.label || '';
-          lines.push(`${mark} ${item.name} (${cat})`);
-        });
-      }
+    lines.push('');
+    lines.push(`[ MARII - ${stats.marii.completed}/${stats.marii.total} prontos (${stats.marii.progressPercent}%) ]`);
+    const mariiItems = items.filter((i) => i.assignedTo === 'marii');
+    mariiItems.forEach((item) => {
+      const mark = item.completed ? '[X]' : '[ ]';
+      const cat = CATEGORIES.find((c) => c.id === item.categoryId)?.label || '';
+      lines.push(`${mark} ${item.name} (${cat})`);
     });
 
     lines.push('');

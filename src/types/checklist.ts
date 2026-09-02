@@ -12,7 +12,7 @@ export interface CategoryInfo {
   description: string;
 }
 
-export type PersonAssignment = 'leeo' | 'marii' | 'ambos';
+export type PersonAssignment = 'leeo' | 'marii';
 
 export interface ChecklistItem {
   id: string;
@@ -24,4 +24,3 @@ export interface ChecklistItem {
 }
 
 export type FilterStatus = 'all' | 'pending' | 'completed';
-export type ViewMode = 'split' | 'leeo' | 'marii' | 'all';
