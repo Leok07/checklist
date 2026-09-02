@@ -1,22 +1,31 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { ChecklistItem, CategoryId } from '../types/checklist';
+import { ChecklistItem, CategoryId, PersonAssignment } from '../types/checklist';
 import { INITIAL_ITEMS, CATEGORIES } from '../data/defaultItems';
 import { isFirebaseConfigured, subscribeToChecklist, saveChecklistToCloud } from '../services/firebase';
 
-const STORAGE_KEY = 'checklist_praia_itens_v1';
+const STORAGE_KEY = 'checklist_praia_itens_v2';
+
+function normalizeItems(rawItems: any[]): ChecklistItem[] {
+  return rawItems.map((item) => ({
+    ...item,
+    assignedTo: (item.assignedTo === 'leeo' || item.assignedTo === 'marii' || item.assignedTo === 'ambos')
+      ? item.assignedTo
+      : 'ambos',
+  }));
+}
 
 export function useChecklist() {
   const [items, setItems] = useState<ChecklistItem[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem('checklist_praia_itens_v1');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          return normalizeItems(parsed);
         }
       }
     } catch {
-      // Caso ocorra erro de parsing, usa a lista padrão
+      // Usa a lista padrão
     }
     return INITIAL_ITEMS;
   });
@@ -33,7 +42,7 @@ export function useChecklist() {
       (cloudItems) => {
         if (Array.isArray(cloudItems) && cloudItems.length > 0) {
           isIncomingFromCloud.current = true;
-          setItems(cloudItems);
+          setItems(normalizeItems(cloudItems));
           setCloudError(null);
         }
       },
@@ -53,7 +62,6 @@ export function useChecklist() {
       // ignora erros de quota
     }
 
-    // Se a alteração veio da nuvem, não reenviar
     if (isIncomingFromCloud.current) {
       isIncomingFromCloud.current = false;
       return;
@@ -88,21 +96,25 @@ export function useChecklist() {
     return true;
   }, [items]);
 
-  const addItem = useCallback((name: string, categoryId: CategoryId = 'geral') => {
-    const trimmed = name.trim();
-    if (!trimmed) return false;
+  const addItem = useCallback(
+    (name: string, categoryId: CategoryId = 'geral', assignedTo: PersonAssignment = 'ambos') => {
+      const trimmed = name.trim();
+      if (!trimmed) return false;
 
-    const newItem: ChecklistItem = {
-      id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      name: trimmed,
-      categoryId,
-      completed: false,
-      createdAt: Date.now(),
-    };
+      const newItem: ChecklistItem = {
+        id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        name: trimmed,
+        categoryId,
+        assignedTo,
+        completed: false,
+        createdAt: Date.now(),
+      };
 
-    setItems((prev) => [newItem, ...prev]);
-    return true;
-  }, []);
+      setItems((prev) => [newItem, ...prev]);
+      return true;
+    },
+    []
+  );
 
   const toggleItem = useCallback((id: string) => {
     setItems((prev) =>
@@ -116,31 +128,57 @@ export function useChecklist() {
     setItems((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
-  const editItem = useCallback((id: string, newName: string, newCategory?: CategoryId) => {
-    const trimmed = newName.trim();
-    if (!trimmed) return false;
+  const editItem = useCallback(
+    (id: string, newName: string, newCategory?: CategoryId, newAssignedTo?: PersonAssignment) => {
+      const trimmed = newName.trim();
+      if (!trimmed) return false;
 
+      setItems((prev) =>
+        prev.map((item) => {
+          if (item.id === id) {
+            return {
+              ...item,
+              name: trimmed,
+              categoryId: newCategory || item.categoryId,
+              assignedTo: newAssignedTo || item.assignedTo || 'ambos',
+            };
+          }
+          return item;
+        })
+      );
+      return true;
+    },
+    []
+  );
+
+  const reassignItem = useCallback((id: string, assignedTo: PersonAssignment) => {
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, assignedTo } : item
+      )
+    );
+  }, []);
+
+  const checkAll = useCallback((personFilter?: PersonAssignment | 'all') => {
     setItems((prev) =>
       prev.map((item) => {
-        if (item.id === id) {
-          return {
-            ...item,
-            name: trimmed,
-            categoryId: newCategory || item.categoryId,
-          };
+        if (!personFilter || personFilter === 'all' || item.assignedTo === personFilter || item.assignedTo === 'ambos') {
+          return { ...item, completed: true };
         }
         return item;
       })
     );
-    return true;
   }, []);
 
-  const checkAll = useCallback(() => {
-    setItems((prev) => prev.map((item) => ({ ...item, completed: true })));
-  }, []);
-
-  const uncheckAll = useCallback(() => {
-    setItems((prev) => prev.map((item) => ({ ...item, completed: false })));
+  const uncheckAll = useCallback((personFilter?: PersonAssignment | 'all') => {
+    setItems((prev) =>
+      prev.map((item) => {
+        if (!personFilter || personFilter === 'all' || item.assignedTo === personFilter || item.assignedTo === 'ambos') {
+          return { ...item, completed: false };
+        }
+        return item;
+      })
+    );
   }, []);
 
   const resetToDefaults = useCallback(() => {
@@ -153,31 +191,64 @@ export function useChecklist() {
     const pending = total - completed;
     const progressPercent = total > 0 ? Math.round((completed / total) * 100) : 0;
 
+    // Métricas Leeo (Itens exclusivos de Leeo + compartilhados)
+    const leeoItems = items.filter((i) => i.assignedTo === 'leeo' || i.assignedTo === 'ambos');
+    const leeoCompleted = leeoItems.filter((i) => i.completed).length;
+    const leeoPending = leeoItems.length - leeoCompleted;
+    const leeoPercent = leeoItems.length > 0 ? Math.round((leeoCompleted / leeoItems.length) * 100) : 0;
+
+    // Métricas Marii (Itens exclusivos de Marii + compartilhados)
+    const mariiItems = items.filter((i) => i.assignedTo === 'marii' || i.assignedTo === 'ambos');
+    const mariiCompleted = mariiItems.filter((i) => i.completed).length;
+    const mariiPending = mariiItems.length - mariiCompleted;
+    const mariiPercent = mariiItems.length > 0 ? Math.round((mariiCompleted / mariiItems.length) * 100) : 0;
+
     return {
       total,
       completed,
       pending,
       progressPercent,
+      leeo: {
+        total: leeoItems.length,
+        completed: leeoCompleted,
+        pending: leeoPending,
+        progressPercent: leeoPercent,
+      },
+      marii: {
+        total: mariiItems.length,
+        completed: mariiCompleted,
+        pending: mariiPending,
+        progressPercent: mariiPercent,
+      },
     };
   }, [items]);
 
   const exportAsText = useCallback(() => {
     const lines: string[] = [];
-    lines.push('CHECKLIST DE VIAGEM - PRAIA');
-    lines.push(`Progresso: ${stats.completed}/${stats.total} itens prontos (${stats.progressPercent}%)`);
+    lines.push('CHECKLIST DE VIAGEM - PRAIA (LEEO E MARII)');
+    lines.push(`Geral: ${stats.completed}/${stats.total} prontos (${stats.progressPercent}%)`);
+    lines.push(`Lado do Leeo: ${stats.leeo.completed}/${stats.leeo.total} prontos (${stats.leeo.progressPercent}%)`);
+    lines.push(`Lado da Marii: ${stats.marii.completed}/${stats.marii.total} prontos (${stats.marii.progressPercent}%)`);
     lines.push('----------------------------------------');
 
-    for (const cat of CATEGORIES) {
-      const catItems = items.filter((item) => item.categoryId === cat.id);
-      if (catItems.length > 0) {
+    const sections: { label: string; filter: (i: ChecklistItem) => boolean }[] = [
+      { label: 'LADO DO LEEO', filter: (i) => i.assignedTo === 'leeo' },
+      { label: 'LADO DA MARII', filter: (i) => i.assignedTo === 'marii' },
+      { label: 'COMPARTILHADO (AMBOS)', filter: (i) => i.assignedTo === 'ambos' },
+    ];
+
+    sections.forEach(({ label, filter }) => {
+      const sectionItems = items.filter(filter);
+      if (sectionItems.length > 0) {
         lines.push('');
-        lines.push(`[ ${cat.label.toUpperCase()} ]`);
-        catItems.forEach((item) => {
+        lines.push(`[ ${label} ]`);
+        sectionItems.forEach((item) => {
           const mark = item.completed ? '[X]' : '[ ]';
-          lines.push(`${mark} ${item.name}`);
+          const cat = CATEGORIES.find((c) => c.id === item.categoryId)?.label || '';
+          lines.push(`${mark} ${item.name} (${cat})`);
         });
       }
-    }
+    });
 
     lines.push('');
     lines.push('----------------------------------------');
@@ -192,6 +263,7 @@ export function useChecklist() {
     toggleItem,
     removeItem,
     editItem,
+    reassignItem,
     checkAll,
     uncheckAll,
     resetToDefaults,
