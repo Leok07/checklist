@@ -1,61 +1,65 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { ChecklistItem, CategoryId, PersonAssignment } from '../types/checklist';
-import { INITIAL_ITEMS, CATEGORIES } from '../data/defaultItems';
-import { isFirebaseConfigured, subscribeToChecklist, saveChecklistToCloud } from '../services/firebase';
+import { CATEGORIES } from '../data/defaultItems';
+import {
+  isFirebaseConfigured,
+  subscribeToTasks,
+  addTaskAtomic,
+  updateTaskCompletionAtomic,
+  updateTaskDetailsAtomic,
+  reassignTaskAtomic,
+  deleteTaskAtomic,
+  clearAllTasksAtomic,
+} from '../services/firebase';
 
-const STORAGE_KEY = 'checklist_praia_itens_v3';
+const STORAGE_KEY = 'task_viagem_v4';
 
-function normalizeItems(rawItems: any[]): ChecklistItem[] {
-  return rawItems.map((item, index) => {
-    let assignedTo: PersonAssignment = 'leeo';
-    if (item.assignedTo === 'marii') {
-      assignedTo = 'marii';
-    } else if (item.assignedTo === 'leeo') {
-      assignedTo = 'leeo';
-    } else {
-      // Se era 'ambos' ou indefinido, distribui equilibradamente
-      assignedTo = index % 2 === 0 ? 'leeo' : 'marii';
-    }
-    return {
-      ...item,
-      assignedTo,
-    };
-  });
+// Limpeza de chaves antigas para garantir que presets antigos não reapareçam
+try {
+  localStorage.removeItem('checklist_praia_itens_v1');
+  localStorage.removeItem('checklist_praia_itens_v2');
+  localStorage.removeItem('checklist_praia_itens_v3');
+} catch {
+  // Ignora
 }
 
 export function useChecklist() {
   const [items, setItems] = useState<ChecklistItem[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem('checklist_praia_itens_v2') || localStorage.getItem('checklist_praia_itens_v1');
+      const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return normalizeItems(parsed);
+        if (Array.isArray(parsed)) {
+          return parsed;
         }
       }
     } catch {
-      // Usa lista padrão
+      // Ignora erro
     }
-    return INITIAL_ITEMS;
+    return [];
   });
 
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const [cloudError, setCloudError] = useState<string | null>(null);
-  const isIncomingFromCloud = useRef(false);
 
-  // Escuta alterações em tempo real do Firebase (se configurado)
+  // Escuta atualizações da nuvem em tempo real (cada tarefa é um documento isolado)
   useEffect(() => {
     if (!isFirebaseConfigured) return;
 
-    const unsubscribe = subscribeToChecklist(
+    setIsCloudSyncing(true);
+    const unsubscribe = subscribeToTasks(
       (cloudItems) => {
-        if (Array.isArray(cloudItems) && cloudItems.length > 0) {
-          isIncomingFromCloud.current = true;
-          setItems(normalizeItems(cloudItems));
-          setCloudError(null);
+        setItems(cloudItems);
+        setIsCloudSyncing(false);
+        setCloudError(null);
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(cloudItems));
+        } catch {
+          // Ignora
         }
       },
       (errMsg) => {
+        setIsCloudSyncing(false);
         setCloudError(errMsg);
       }
     );
@@ -63,55 +67,23 @@ export function useChecklist() {
     return () => unsubscribe();
   }, []);
 
-  // Salva no localStorage e sincroniza na nuvem
+  // Salva no localStorage local como cache
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
     } catch {
-      // ignora erros de quota
-    }
-
-    if (isIncomingFromCloud.current) {
-      isIncomingFromCloud.current = false;
-      return;
-    }
-
-    if (isFirebaseConfigured) {
-      setIsCloudSyncing(true);
-      const timer = setTimeout(async () => {
-        const res = await saveChecklistToCloud(items);
-        setIsCloudSyncing(false);
-        if (!res.success && res.error) {
-          setCloudError(res.error);
-        } else {
-          setCloudError(null);
-        }
-      }, 500);
-
-      return () => clearTimeout(timer);
+      // Ignora
     }
   }, [items]);
 
-  const forceSyncToCloud = useCallback(async () => {
-    if (!isFirebaseConfigured) return false;
-    setIsCloudSyncing(true);
-    const res = await saveChecklistToCloud(items);
-    setIsCloudSyncing(false);
-    if (!res.success && res.error) {
-      setCloudError(res.error);
-      return false;
-    }
-    setCloudError(null);
-    return true;
-  }, [items]);
-
+  // Adicionar tarefa (atômico)
   const addItem = useCallback(
-    (name: string, categoryId: CategoryId = 'geral', assignedTo: PersonAssignment = 'leeo') => {
+    async (name: string, categoryId: CategoryId = 'geral', assignedTo: PersonAssignment = 'leeo') => {
       const trimmed = name.trim();
       if (!trimmed) return false;
 
       const newItem: ChecklistItem = {
-        id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        id: `task-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         name: trimmed,
         categoryId,
         assignedTo,
@@ -119,98 +91,201 @@ export function useChecklist() {
         createdAt: Date.now(),
       };
 
-      setItems((prev) => [newItem, ...prev]);
+      // Atualização otimista
+      setItems((prev) => [newItem, ...prev.filter((i) => i.id !== newItem.id)]);
+
+      if (isFirebaseConfigured) {
+        setIsCloudSyncing(true);
+        const res = await addTaskAtomic(newItem);
+        setIsCloudSyncing(false);
+        if (!res.success && res.error) {
+          setCloudError(res.error);
+        }
+      }
+
       return true;
     },
     []
   );
 
-  const toggleItem = useCallback((id: string) => {
-    setItems((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, completed: !item.completed } : item
-      )
-    );
-  }, []);
+  // Alternar conclusão (atômico - não altera nada do outro usuário)
+  const toggleItem = useCallback(
+    async (id: string) => {
+      let targetCompleted = false;
 
-  const removeItem = useCallback((id: string) => {
-    setItems((prev) => prev.filter((item) => item.id !== id));
-  }, []);
+      // Atualização otimista
+      setItems((prev) =>
+        prev.map((item) => {
+          if (item.id === id) {
+            targetCompleted = !item.completed;
+            return { ...item, completed: targetCompleted };
+          }
+          return item;
+        })
+      );
 
+      if (isFirebaseConfigured) {
+        setIsCloudSyncing(true);
+        const res = await updateTaskCompletionAtomic(id, targetCompleted);
+        setIsCloudSyncing(false);
+        if (!res.success && res.error) {
+          setCloudError(res.error);
+        }
+      }
+    },
+    []
+  );
+
+  // Remover tarefa (atômico)
+  const removeItem = useCallback(
+    async (id: string) => {
+      // Atualização otimista
+      setItems((prev) => prev.filter((item) => item.id !== id));
+
+      if (isFirebaseConfigured) {
+        setIsCloudSyncing(true);
+        const res = await deleteTaskAtomic(id);
+        setIsCloudSyncing(false);
+        if (!res.success && res.error) {
+          setCloudError(res.error);
+        }
+      }
+    },
+    []
+  );
+
+  // Editar tarefa (atômico)
   const editItem = useCallback(
-    (id: string, newName: string, newCategory?: CategoryId, newAssignedTo?: PersonAssignment) => {
+    async (id: string, newName: string, newCategory?: CategoryId, newAssignedTo?: PersonAssignment) => {
       const trimmed = newName.trim();
       if (!trimmed) return false;
+
+      let finalCat: CategoryId = 'geral';
+      let finalAssigned: PersonAssignment = 'leeo';
 
       setItems((prev) =>
         prev.map((item) => {
           if (item.id === id) {
+            finalCat = newCategory || item.categoryId;
+            finalAssigned = newAssignedTo || item.assignedTo;
             return {
               ...item,
               name: trimmed,
-              categoryId: newCategory || item.categoryId,
-              assignedTo: newAssignedTo || item.assignedTo,
+              categoryId: finalCat,
+              assignedTo: finalAssigned,
             };
           }
           return item;
         })
       );
+
+      if (isFirebaseConfigured) {
+        setIsCloudSyncing(true);
+        const res = await updateTaskDetailsAtomic(id, trimmed, finalCat, finalAssigned);
+        setIsCloudSyncing(false);
+        if (!res.success && res.error) {
+          setCloudError(res.error);
+        }
+      }
+
       return true;
     },
     []
   );
 
-  const reassignItem = useCallback((id: string) => {
-    setItems((prev) =>
-      prev.map((item) => {
-        if (item.id === id) {
-          const nextAssigned: PersonAssignment = item.assignedTo === 'leeo' ? 'marii' : 'leeo';
-          return { ...item, assignedTo: nextAssigned };
-        }
-        return item;
-      })
-    );
-  }, []);
+  // Transferir tarefa para a outra pessoa com 1 toque (atômico)
+  const reassignItem = useCallback(
+    async (id: string) => {
+      let nextAssigned: PersonAssignment = 'marii';
 
-  const checkAll = useCallback((person?: PersonAssignment) => {
-    setItems((prev) =>
-      prev.map((item) => {
+      setItems((prev) =>
+        prev.map((item) => {
+          if (item.id === id) {
+            nextAssigned = item.assignedTo === 'leeo' ? 'marii' : 'leeo';
+            return { ...item, assignedTo: nextAssigned };
+          }
+          return item;
+        })
+      );
+
+      if (isFirebaseConfigured) {
+        setIsCloudSyncing(true);
+        const res = await reassignTaskAtomic(id, nextAssigned);
+        setIsCloudSyncing(false);
+        if (!res.success && res.error) {
+          setCloudError(res.error);
+        }
+      }
+    },
+    []
+  );
+
+  // Marcar todas de uma pessoa
+  const checkAll = useCallback(
+    async (person?: PersonAssignment) => {
+      const updated = items.map((item) => {
         if (!person || item.assignedTo === person) {
           return { ...item, completed: true };
         }
         return item;
-      })
-    );
-  }, []);
+      });
+      setItems(updated);
 
-  const uncheckAll = useCallback((person?: PersonAssignment) => {
-    setItems((prev) =>
-      prev.map((item) => {
+      if (isFirebaseConfigured) {
+        const toUpdate = items.filter((i) => (!person || i.assignedTo === person) && !i.completed);
+        for (const it of toUpdate) {
+          await updateTaskCompletionAtomic(it.id, true);
+        }
+      }
+    },
+    [items]
+  );
+
+  // Desmarcar todas de uma pessoa
+  const uncheckAll = useCallback(
+    async (person?: PersonAssignment) => {
+      const updated = items.map((item) => {
         if (!person || item.assignedTo === person) {
           return { ...item, completed: false };
         }
         return item;
-      })
-    );
-  }, []);
+      });
+      setItems(updated);
 
-  const resetToDefaults = useCallback(() => {
-    setItems(INITIAL_ITEMS);
-  }, []);
+      if (isFirebaseConfigured) {
+        const toUpdate = items.filter((i) => (!person || i.assignedTo === person) && i.completed);
+        for (const it of toUpdate) {
+          await updateTaskCompletionAtomic(it.id, false);
+        }
+      }
+    },
+    [items]
+  );
 
+  // Limpar todas as tarefas
+  const clearAllTasks = useCallback(async () => {
+    const ids = items.map((i) => i.id);
+    setItems([]);
+
+    if (isFirebaseConfigured && ids.length > 0) {
+      setIsCloudSyncing(true);
+      await clearAllTasksAtomic(ids);
+      setIsCloudSyncing(false);
+    }
+  }, [items]);
+
+  // Estatísticas
   const stats = useMemo(() => {
     const total = items.length;
     const completed = items.filter((i) => i.completed).length;
     const pending = total - completed;
     const progressPercent = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-    // Métricas do Leeo
     const leeoItems = items.filter((i) => i.assignedTo === 'leeo');
     const leeoCompleted = leeoItems.filter((i) => i.completed).length;
     const leeoPending = leeoItems.length - leeoCompleted;
     const leeoPercent = leeoItems.length > 0 ? Math.round((leeoCompleted / leeoItems.length) * 100) : 0;
 
-    // Métricas da Marii
     const mariiItems = items.filter((i) => i.assignedTo === 'marii');
     const mariiCompleted = mariiItems.filter((i) => i.completed).length;
     const mariiPending = mariiItems.length - mariiCompleted;
@@ -236,33 +311,42 @@ export function useChecklist() {
     };
   }, [items]);
 
+  // Exportação limpa
   const exportAsText = useCallback(() => {
     const lines: string[] = [];
-    lines.push('CHECKLIST DE PRAIA - LEEO E MARII');
-    lines.push(`Total: ${stats.completed}/${stats.total} itens prontos (${stats.progressPercent}%)`);
+    lines.push('TASK DE VIAGEM - LEEO E MARII');
+    lines.push(`Total: ${stats.completed}/${stats.total} tarefas concluídas (${stats.progressPercent}%)`);
     lines.push('----------------------------------------');
 
     lines.push('');
-    lines.push(`[ LEEO - ${stats.leeo.completed}/${stats.leeo.total} prontos (${stats.leeo.progressPercent}%) ]`);
+    lines.push(`[ LEEO - ${stats.leeo.completed}/${stats.leeo.total} prontas (${stats.leeo.progressPercent}%) ]`);
     const leeoItems = items.filter((i) => i.assignedTo === 'leeo');
-    leeoItems.forEach((item) => {
-      const mark = item.completed ? '[X]' : '[ ]';
-      const cat = CATEGORIES.find((c) => c.id === item.categoryId)?.label || '';
-      lines.push(`${mark} ${item.name} (${cat})`);
-    });
+    if (leeoItems.length === 0) {
+      lines.push('(Nenhuma tarefa)');
+    } else {
+      leeoItems.forEach((item) => {
+        const mark = item.completed ? '[X]' : '[ ]';
+        const cat = CATEGORIES.find((c) => c.id === item.categoryId)?.label || '';
+        lines.push(`${mark} ${item.name} (${cat})`);
+      });
+    }
 
     lines.push('');
-    lines.push(`[ MARII - ${stats.marii.completed}/${stats.marii.total} prontos (${stats.marii.progressPercent}%) ]`);
+    lines.push(`[ MARII - ${stats.marii.completed}/${stats.marii.total} prontas (${stats.marii.progressPercent}%) ]`);
     const mariiItems = items.filter((i) => i.assignedTo === 'marii');
-    mariiItems.forEach((item) => {
-      const mark = item.completed ? '[X]' : '[ ]';
-      const cat = CATEGORIES.find((c) => c.id === item.categoryId)?.label || '';
-      lines.push(`${mark} ${item.name} (${cat})`);
-    });
+    if (mariiItems.length === 0) {
+      lines.push('(Nenhuma tarefa)');
+    } else {
+      mariiItems.forEach((item) => {
+        const mark = item.completed ? '[X]' : '[ ]';
+        const cat = CATEGORIES.find((c) => c.id === item.categoryId)?.label || '';
+        lines.push(`${mark} ${item.name} (${cat})`);
+      });
+    }
 
     lines.push('');
     lines.push('----------------------------------------');
-    lines.push('Gerado pelo Checklist de Praia');
+    lines.push('Gerado pelo Task de Viagem');
 
     return lines.join('\n');
   }, [items, stats]);
@@ -276,12 +360,11 @@ export function useChecklist() {
     reassignItem,
     checkAll,
     uncheckAll,
-    resetToDefaults,
+    clearAllTasks,
     exportAsText,
     stats,
     isCloudConfigured: isFirebaseConfigured,
     isCloudSyncing,
     cloudError,
-    forceSyncToCloud,
   };
 }

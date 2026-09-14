@@ -1,59 +1,19 @@
-# Checklist de Viagem - Praia
+# Task de Viagem
 
-Aplicação web moderna, responsiva e elegante desenvolvida com React, TypeScript, Tailwind CSS e Vite. Projetada especialmente para organização de malas para viagens à praia, com suporte completo a **Modo Escuro (Dark Mode)**, interface otimizada para smartphones, persistência automática no navegador (`localStorage`) e estrutura pronta para publicação na Vercel via repositório no GitHub.
+Aplicação web moderna, minimalista e responsiva desenvolvida para organização de tarefas e bagagem de viagem a dois (**Leeo & Marii**), com sincronização atômica em tempo real via **Firebase Firestore**, suporte completo a **Modo Escuro (Dark Mode)**, layout direto ao ponto meio a meio com divisor central e deploy contínuo na Vercel via GitHub.
 
 ---
 
 ## Funcionalidades
 
-- **Itens Pré-configurados**: 20 itens essenciais categorizados por área (Praia e Sol, Vestuário e Acomodação, Higiene e Cuidados, Saúde e Documentos, Praticidade e Viagem).
-- **Modo Escuro & Claro (Dark / Light)**: Alternância elegante de tema com persistência local e adaptação automática à preferência do sistema operacional.
-- **Otimizado para Celular (Mobile-First)**:
-  - Botão flutuante (FAB) de fácil alcance para adicionar itens com o polegar.
-  - Áreas de toque confortáveis (mínimo 44px).
-  - Modal em formato Bottom Sheet deslizante no smartphone.
-  - Prevenção de auto-zoom indesejado no Safari / iOS.
-- **Gerenciamento Completo**: Adicione novos itens personalizados, edite nomes/categorias e remova itens a qualquer momento.
-- **Sugestões Inteligentes**: Atalhos com sugestões úteis para praia ao adicionar um novo item.
-- **Progresso em Tempo Real**: Barra de status visual com percentual, contador de itens concluídos versus pendentes.
-- **Filtros e Busca Instantânea**: Filtre por status (Todos, Pendentes, Prontos) ou por categoria temática, além de busca por texto em tempo real.
-- **Ações em Lote**: Marque todos como prontos, desmarque todos (ideal para reutilizar a lista na próxima viagem) ou restaure a lista original.
-- **Exportação Limpa**: Copie o checklist completo formatado em texto para colar no WhatsApp ou aplicativo de notas.
-- **Identidade Visual Refinada**: Design costeiro minimalista, sem poluição visual e estritamente sem emojis, utilizando ícones vetoriais modernos (`Lucide Icons`).
-
----
-
-## Itens Inclusos por Categoria
-
-1. **Saúde e Documentos**
-   - Remédios
-   - Documentos
-
-2. **Praia e Sol**
-   - Protetor solar
-   - Roupa para banho na praia
-   - Cadeira de praia
-   - Guarda-sol
-   - Canga
-   - Garrafinha de água
-
-3. **Vestuário e Acomodação**
-   - Roupa de casamento
-   - Roupa de cama
-   - Coberta
-   - Toalha
-
-4. **Higiene e Cuidados**
-   - Shampoo
-   - Sabonete
-   - Produtos de higiene bucal
-   - Perfume / desodorante
-
-5. **Praticidade e Viagem**
-   - Carregador
-   - Comidinhas e lanches
-   - Sacolas
-   - Papel higiênico / toalha
+- **Tela Meio a Meio Direta**: Layout 50/50 com um divisor central nítido entre **Leeo** e **Marii**, sem telas intermediárias.
+- **Sincronização Atômica em Tempo Real**: Cada tarefa é gerenciada individualmente no Firebase Firestore. As ações de um usuário nunca sobrescrevem nem resetam os itens do outro.
+- **Lista Inicial Limpa (Sem Presets)**: A aplicação inicia completamente vazia, permitindo adicionar apenas as tarefas reais da sua viagem.
+- **Transferência Instantânea**: Transfira qualquer tarefa entre o Leeo e a Marii com 1 toque.
+- **Modo Escuro & Claro (Dark / Light)**: Alternância suave com persistência local e suporte ao sistema operacional.
+- **Otimizado para Celular (Mobile-First)**: Áreas de toque confortáveis (mínimo 44px) e inputs com prevenção de auto-zoom no Safari iOS.
+- **Exportação Limpa**: Copie o relatório formatado para o WhatsApp separado por responsável, com marcadores `[X]` e `[ ]`.
+- **Identidade Visual Refinada**: Estritamente **zero emojis**, utilizando ícones vetoriais modernos (`Lucide Icons`).
 
 ---
 
@@ -63,7 +23,6 @@ Aplicação web moderna, responsiva e elegante desenvolvida com React, TypeScrip
 ```bash
 npm.cmd run dev
 ```
-Acesse o link indicado no terminal (normalmente `http://localhost:5173`).
 
 ### 2. Gerar build de produção
 ```bash
@@ -72,26 +31,14 @@ npm.cmd run build
 
 ---
 
-## Como Subir no GitHub e Publicar na Vercel
+## Deploy na Vercel
 
-### Passo 1: Criar o Repositório no GitHub
-1. Acesse [github.com/new](https://github.com/new) e crie um novo repositório (ex: `checklist-praia`).
+O projeto está configurado para deploy automático na Vercel a cada commit no branch `main`.
 
-### Passo 2: Enviar os Arquivos
-No terminal da pasta do projeto, execute:
-
-```bash
-wsl -e git remote add origin https://github.com/SEU_USUARIO/checklist-praia.git
-wsl -e git push -u origin main
-```
-
-### Passo 3: Conectar e Publicar na Vercel
-1. Acesse [vercel.com](https://vercel.com) e faça login com sua conta do GitHub.
-2. Clique em **"Add New..."** e selecione **"Project"**.
-3. Localize e clique em **"Import"** ao lado de `checklist-praia`.
-4. A Vercel detectará automaticamente a configuração do Vite:
-   - **Framework Preset**: Vite
-   - **Build Command**: `npm run build`
-   - **Output Directory**: `dist`
-5. Clique em **"Deploy"**.
-6. Sua aplicação estará online com HTTPS e link público!
+Variáveis de ambiente necessárias na Vercel:
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`

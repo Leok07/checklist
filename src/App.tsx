@@ -20,13 +20,12 @@ export function App() {
     reassignItem,
     checkAll,
     uncheckAll,
-    resetToDefaults,
+    clearAllTasks,
     exportAsText,
     stats,
     isCloudConfigured,
     isCloudSyncing,
     cloudError,
-    forceSyncToCloud,
   } = useChecklist();
 
   const { theme, toggleTheme } = useTheme();
@@ -48,10 +47,10 @@ export function App() {
     setIsAddModalOpen(true);
   };
 
-  const handleAddItem = (name: string, categoryId: CategoryId, assignedTo: PersonAssignment) => {
-    const success = addItem(name, categoryId, assignedTo);
+  const handleAddItem = async (name: string, categoryId: CategoryId, assignedTo: PersonAssignment) => {
+    const success = await addItem(name, categoryId, assignedTo);
     if (success) {
-      showToast(`Item "${name}" adicionado para ${assignedTo === 'leeo' ? 'Leeo' : 'Marii'}.`);
+      showToast(`Task "${name}" adicionada para ${assignedTo === 'leeo' ? 'Leeo' : 'Marii'}.`);
     }
   };
 
@@ -105,7 +104,7 @@ export function App() {
   return (
     <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F17] text-slate-800 dark:text-slate-100 flex flex-col justify-between transition-colors duration-200 selection:bg-ocean-500 selection:text-white">
       <div className="max-w-6xl mx-auto px-3 sm:px-6 w-full pb-20 sm:pb-16">
-        {/* Cabeçalho Limpo */}
+        {/* Cabeçalho */}
         <Header
           onOpenAddModal={() => handleOpenAdd('leeo')}
           onCopyList={handleCopyList}
@@ -114,10 +113,9 @@ export function App() {
           isCloudConfigured={isCloudConfigured}
           isCloudSyncing={isCloudSyncing}
           cloudError={cloudError}
-          onForceSync={forceSyncToCloud}
         />
 
-        {/* Barra Compacta de Busca e Filtros Rápidos */}
+        {/* Barra Compacta de Busca e Filtros */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 mb-5 text-xs">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
@@ -125,7 +123,7 @@ export function App() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Pesquisar itens..."
+              placeholder="Pesquisar tarefas..."
               className="w-full pl-9 pr-8 py-2 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ocean-500/20"
             />
             {searchQuery && (
@@ -149,7 +147,7 @@ export function App() {
                     : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
                 }`}
               >
-                Todos
+                Todas
               </button>
               <button
                 onClick={() => setStatusFilter('pending')}
@@ -169,7 +167,7 @@ export function App() {
                     : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
                 }`}
               >
-                Prontos
+                Prontas
               </button>
             </div>
 
@@ -194,7 +192,7 @@ export function App() {
           <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-200 dark:divide-slate-800">
             
             {/* LADO ESQUERDO: LEEO */}
-            <section className="p-4 sm:p-5 flex flex-col">
+            <section className="p-4 sm:p-5 flex flex-col min-h-[300px]">
               {/* Topo Leeo */}
               <div className="pb-4 border-b border-slate-100 dark:border-slate-800/80 mb-4">
                 <div className="flex items-center justify-between mb-2">
@@ -203,7 +201,7 @@ export function App() {
                       Leeo
                     </h2>
                     <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
-                      {stats.leeo.completed}/{stats.leeo.total} itens
+                      {stats.leeo.completed}/{stats.leeo.total} tarefas
                     </span>
                   </div>
                   <button
@@ -215,7 +213,7 @@ export function App() {
                   </button>
                 </div>
 
-                {/* Barra Leeo */}
+                {/* Barra de Progresso Leeo */}
                 <div className="flex items-center gap-2">
                   <div className="flex-1 h-2 bg-sky-100 dark:bg-sky-950 rounded-full overflow-hidden">
                     <div
@@ -232,9 +230,15 @@ export function App() {
               {/* Lista Leeo */}
               <div className="space-y-2 flex-1">
                 {leeoItems.length === 0 ? (
-                  <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-8">
-                    Nenhum item para o Leeo.
-                  </p>
+                  <div className="flex flex-col items-center justify-center py-12 text-center text-slate-400 dark:text-slate-500 space-y-2">
+                    <p className="text-xs">Nenhuma task para o Leeo.</p>
+                    <button
+                      onClick={() => handleOpenAdd('leeo')}
+                      className="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline"
+                    >
+                      + Adicionar tarefa para o Leeo
+                    </button>
+                  </div>
                 ) : (
                   leeoItems.map((item) => (
                     <ItemCard
@@ -251,7 +255,7 @@ export function App() {
             </section>
 
             {/* LADO DIREITO: MARII */}
-            <section className="p-4 sm:p-5 flex flex-col">
+            <section className="p-4 sm:p-5 flex flex-col min-h-[300px]">
               {/* Topo Marii */}
               <div className="pb-4 border-b border-slate-100 dark:border-slate-800/80 mb-4">
                 <div className="flex items-center justify-between mb-2">
@@ -260,7 +264,7 @@ export function App() {
                       Marii
                     </h2>
                     <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
-                      {stats.marii.completed}/{stats.marii.total} itens
+                      {stats.marii.completed}/{stats.marii.total} tarefas
                     </span>
                   </div>
                   <button
@@ -272,7 +276,7 @@ export function App() {
                   </button>
                 </div>
 
-                {/* Barra Marii */}
+                {/* Barra de Progresso Marii */}
                 <div className="flex items-center gap-2">
                   <div className="flex-1 h-2 bg-violet-100 dark:bg-violet-950 rounded-full overflow-hidden">
                     <div
@@ -289,9 +293,15 @@ export function App() {
               {/* Lista Marii */}
               <div className="space-y-2 flex-1">
                 {mariiItems.length === 0 ? (
-                  <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-8">
-                    Nenhum item para a Marii.
-                  </p>
+                  <div className="flex flex-col items-center justify-center py-12 text-center text-slate-400 dark:text-slate-500 space-y-2">
+                    <p className="text-xs">Nenhuma task para a Marii.</p>
+                    <button
+                      onClick={() => handleOpenAdd('marii')}
+                      className="text-xs font-semibold text-violet-600 dark:text-violet-400 hover:underline"
+                    >
+                      + Adicionar tarefa para a Marii
+                    </button>
+                  </div>
                 ) : (
                   mariiItems.map((item) => (
                     <ItemCard
@@ -311,20 +321,22 @@ export function App() {
         </main>
 
         {/* Ações em Massa */}
-        <ActionToolbar
-          onCheckAll={checkAll}
-          onUncheckAll={uncheckAll}
-          onResetToDefaults={resetToDefaults}
-          totalItems={stats.total}
-          filteredCount={leeoItems.length + mariiItems.length}
-        />
+        {items.length > 0 && (
+          <ActionToolbar
+            onCheckAll={() => checkAll()}
+            onUncheckAll={() => uncheckAll()}
+            onClearAll={clearAllTasks}
+            totalItems={stats.total}
+            filteredCount={leeoItems.length + mariiItems.length}
+          />
+        )}
       </div>
 
       {/* Rodapé Minimalista */}
       <footer className="border-t border-slate-200/70 dark:border-slate-800/80 py-5 text-center text-xs text-slate-400 dark:text-slate-500">
         <div className="flex items-center justify-center gap-1.5 mb-1">
           <Waves className="w-4 h-4 text-ocean-500" />
-          <span className="font-semibold text-slate-700 dark:text-slate-300">Checklist de Praia</span>
+          <span className="font-semibold text-slate-700 dark:text-slate-300">Task de Viagem</span>
         </div>
         <p>Leeo e Marii</p>
       </footer>
