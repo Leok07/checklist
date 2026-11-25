@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Check, Trash2, Edit3, CheckCircle, X, ArrowLeftRight } from 'lucide-react';
 import { ChecklistItem, CategoryId, PersonAssignment } from '../types/checklist';
-import { CATEGORIES } from '../data/defaultItems';
+import { CATEGORIES, CATEGORY_MAP } from '../data/defaultItems';
 
 interface ItemCardProps {
   item: ChecklistItem;
@@ -23,7 +23,21 @@ export const ItemCard: React.FC<ItemCardProps> = ({
   const [editedCategory, setEditedCategory] = useState<CategoryId>(item.categoryId);
   const [editedAssignedTo, setEditedAssignedTo] = useState<PersonAssignment>(item.assignedTo);
 
-  const category = CATEGORIES.find((c) => c.id === item.categoryId) || CATEGORIES[0];
+  const category = CATEGORY_MAP[item.categoryId] ?? CATEGORIES[0];
+
+  const startEditing = () => {
+    setEditedName(item.name);
+    setEditedCategory(item.categoryId);
+    setEditedAssignedTo(item.assignedTo);
+    setIsEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setEditedName(item.name);
+    setEditedCategory(item.categoryId);
+    setEditedAssignedTo(item.assignedTo);
+    setIsEditing(false);
+  };
 
   const handleSave = () => {
     if (editedName.trim()) {
@@ -36,10 +50,7 @@ export const ItemCard: React.FC<ItemCardProps> = ({
     if (e.key === 'Enter') {
       handleSave();
     } else if (e.key === 'Escape') {
-      setEditedName(item.name);
-      setEditedCategory(item.categoryId);
-      setEditedAssignedTo(item.assignedTo);
-      setIsEditing(false);
+      cancelEditing();
     }
   };
 
@@ -52,14 +63,16 @@ export const ItemCard: React.FC<ItemCardProps> = ({
           onChange={(e) => setEditedName(e.target.value)}
           onKeyDown={handleKeyDown}
           autoFocus
-          className="w-full px-3 py-2 text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-ocean-500/30"
-          placeholder="Nome do item"
+          aria-label="Nome da tarefa"
+          className="w-full px-3 py-2 text-base sm:text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-ocean-500/30"
+          placeholder="Nome da tarefa"
         />
         <div className="grid grid-cols-2 gap-2">
           <select
             value={editedCategory}
             onChange={(e) => setEditedCategory(e.target.value as CategoryId)}
-            className="w-full px-2 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-lg text-xs"
+            aria-label="Categoria da tarefa"
+            className="w-full px-2 py-2 sm:py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-lg text-base sm:text-xs"
           >
             {CATEGORIES.map((c) => (
               <option key={c.id} value={c.id}>
@@ -71,7 +84,8 @@ export const ItemCard: React.FC<ItemCardProps> = ({
           <select
             value={editedAssignedTo}
             onChange={(e) => setEditedAssignedTo(e.target.value as PersonAssignment)}
-            className="w-full px-2 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-lg text-xs font-semibold"
+            aria-label="Responsável pela tarefa"
+            className="w-full px-2 py-2 sm:py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-lg text-base sm:text-xs font-semibold"
           >
             <option value="leeo">Leeo</option>
             <option value="marii">Marii</option>
@@ -79,20 +93,19 @@ export const ItemCard: React.FC<ItemCardProps> = ({
         </div>
         <div className="flex justify-end gap-1.5 pt-1">
           <button
-            onClick={() => {
-              setEditedName(item.name);
-              setEditedAssignedTo(item.assignedTo);
-              setIsEditing(false);
-            }}
-            className="px-2.5 py-1 text-xs text-slate-500 hover:text-slate-800 dark:hover:text-white rounded bg-slate-100 dark:bg-slate-800"
+            type="button"
+            onClick={cancelEditing}
+            aria-label="Cancelar edição"
+            className="px-3 py-2 sm:py-1 text-xs text-slate-500 hover:text-slate-800 dark:hover:text-white rounded-lg bg-slate-100 dark:bg-slate-800 min-h-[40px] sm:min-h-[32px] flex items-center justify-center"
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
           </button>
           <button
+            type="button"
             onClick={handleSave}
-            className="px-3 py-1 text-xs text-white rounded bg-ocean-600 hover:bg-ocean-700 flex items-center gap-1 font-medium"
+            className="px-3.5 py-2 sm:py-1 text-xs text-white rounded-lg bg-ocean-600 hover:bg-ocean-700 flex items-center gap-1 font-medium min-h-[40px] sm:min-h-[32px]"
           >
-            <CheckCircle className="w-3.5 h-3.5" />
+            <CheckCircle className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
             Salvar
           </button>
         </div>
@@ -104,7 +117,7 @@ export const ItemCard: React.FC<ItemCardProps> = ({
 
   return (
     <div
-      className={`group relative flex items-center justify-between p-2.5 sm:p-3 rounded-xl border transition-all duration-150 ${
+      className={`group relative flex items-center justify-between p-2 sm:p-3 rounded-xl border transition-all duration-150 ${
         item.completed
           ? 'bg-slate-50/70 dark:bg-slate-900/30 border-slate-200/50 dark:border-slate-800/50 text-slate-400 dark:text-slate-500'
           : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 hover:border-slate-300 dark:hover:border-slate-700 shadow-sm'
@@ -112,8 +125,17 @@ export const ItemCard: React.FC<ItemCardProps> = ({
     >
       {/* Área Principal Clicável */}
       <div
+        role="button"
+        tabIndex={0}
         onClick={() => onToggle(item.id)}
-        className="flex items-center gap-2.5 flex-1 min-w-0 pr-2 cursor-pointer select-none active:opacity-75"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle(item.id);
+          }
+        }}
+        aria-pressed={item.completed}
+        className="flex items-center gap-2.5 flex-1 min-w-0 pr-1 cursor-pointer select-none active:opacity-75 min-h-[44px] sm:min-h-0"
       >
         {/* Checkbox */}
         <div
@@ -145,42 +167,47 @@ export const ItemCard: React.FC<ItemCardProps> = ({
         </div>
       </div>
 
-      {/* Ações Rápidas */}
+      {/* Ações Rápidas com alvo de toque confortável */}
       <div className="flex items-center gap-0.5 shrink-0">
-        {/* Botão de Transferir para o outro com 1 toque */}
         {onReassign && (
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               onReassign(item.id);
             }}
-            title={isLeeo ? 'Passar item para a Marii' : 'Passar item para o Leeo'}
-            className="p-1.5 text-slate-400 hover:text-ocean-600 dark:hover:text-ocean-400 hover:bg-ocean-50 dark:hover:bg-ocean-950/40 rounded-lg transition"
+            aria-label={isLeeo ? `Passar ${item.name} para Marii` : `Passar ${item.name} para Leeo`}
+            title={isLeeo ? 'Passar tarefa para Marii' : 'Passar tarefa para Leeo'}
+            className="min-w-[40px] min-h-[40px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center text-slate-400 hover:text-ocean-600 dark:hover:text-ocean-400 hover:bg-ocean-50 dark:hover:bg-ocean-950/40 rounded-lg transition"
           >
-            <ArrowLeftRight className="w-3.5 h-3.5" />
+            <ArrowLeftRight className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
           </button>
         )}
 
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
-            setIsEditing(true);
+            startEditing();
           }}
-          title="Editar item"
-          className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition"
+          aria-label={`Editar ${item.name}`}
+          title="Editar tarefa"
+          className="min-w-[40px] min-h-[40px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition"
         >
-          <Edit3 className="w-3.5 h-3.5" />
+          <Edit3 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
         </button>
 
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             onRemove(item.id);
           }}
-          title="Remover item"
-          className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition"
+          aria-label={`Remover ${item.name}`}
+          title="Remover tarefa"
+          className="min-w-[40px] min-h-[40px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition"
         >
-          <Trash2 className="w-3.5 h-3.5" />
+          <Trash2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
         </button>
       </div>
     </div>

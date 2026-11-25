@@ -10,15 +10,15 @@ interface AddItemModalProps {
   initialAssignedTo?: PersonAssignment;
 }
 
-const QUICK_SUGGESTIONS: { name: string; categoryId: CategoryId; assignedTo: PersonAssignment }[] = [
-  { name: 'Óculos de sol', categoryId: 'praia', assignedTo: 'leeo' },
-  { name: 'Chinelo ou sandália', categoryId: 'praia', assignedTo: 'marii' },
-  { name: 'Caixa térmica / cooler', categoryId: 'praticidade', assignedTo: 'leeo' },
-  { name: 'Chapéu ou boné', categoryId: 'praia', assignedTo: 'marii' },
-  { name: 'Repelente', categoryId: 'saude_docs', assignedTo: 'leeo' },
-  { name: 'Bateria portátil (Powerbank)', categoryId: 'praticidade', assignedTo: 'leeo' },
-  { name: 'Kit de maquiagem / skincare', categoryId: 'higiene', assignedTo: 'marii' },
-  { name: 'Secador / prancha', categoryId: 'higiene', assignedTo: 'marii' },
+const QUICK_SUGGESTIONS: { name: string; categoryId: CategoryId }[] = [
+  { name: 'Óculos de sol', categoryId: 'praia' },
+  { name: 'Chinelo ou sandália', categoryId: 'praia' },
+  { name: 'Caixa térmica / cooler', categoryId: 'praticidade' },
+  { name: 'Chapéu ou boné', categoryId: 'praia' },
+  { name: 'Repelente', categoryId: 'saude_docs' },
+  { name: 'Bateria portátil (Powerbank)', categoryId: 'praticidade' },
+  { name: 'Kit de maquiagem / skincare', categoryId: 'higiene' },
+  { name: 'Secador / prancha', categoryId: 'higiene' },
 ];
 
 export const AddItemModal: React.FC<AddItemModalProps> = ({
@@ -33,17 +33,30 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      setAssignedTo(initialAssignedTo);
-      setTimeout(() => {
-        inputRef.current?.focus();
-      }, 100);
-    } else {
+    if (!isOpen) {
       setName('');
       setCategory('praia');
       setAssignedTo('leeo');
+      return;
     }
-  }, [isOpen, initialAssignedTo]);
+
+    setAssignedTo(initialAssignedTo);
+    const focusTimer = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 100);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      clearTimeout(focusTimer);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, initialAssignedTo, onClose]);
 
   if (!isOpen) return null;
 
@@ -56,16 +69,25 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
     }
   };
 
-  const handleSuggestionClick = (item: { name: string; categoryId: CategoryId; assignedTo: PersonAssignment }) => {
+  // Mantém o responsável já selecionado pelo usuário ao clicar em uma sugestão rápida
+  const handleSuggestionClick = (item: { name: string; categoryId: CategoryId }) => {
     setName(item.name);
     setCategory(item.categoryId);
-    setAssignedTo(item.assignedTo);
     inputRef.current?.focus();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border-t sm:border border-slate-200 dark:border-slate-800 relative animate-in slide-in-from-bottom-5 sm:zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-task-modal-title"
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-sm transition-opacity"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border-t sm:border border-slate-200 dark:border-slate-800 relative max-h-[90vh] overflow-y-auto"
+      >
         <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full mx-auto mb-4 sm:hidden" />
 
         <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-100 dark:border-slate-800 mb-4 sm:mb-5">
@@ -73,14 +95,18 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             <div className="w-8 h-8 rounded-lg bg-ocean-50 dark:bg-ocean-950 text-ocean-600 dark:text-ocean-400 flex items-center justify-center">
               <Plus className="w-4 h-4" />
             </div>
-            <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
-              Adicionar Item
+            <h3
+              id="add-task-modal-title"
+              className="text-base sm:text-lg font-bold text-slate-900 dark:text-white"
+            >
+              Nova Task
             </h3>
           </div>
           <button
+            type="button"
             onClick={onClose}
             aria-label="Fechar modal"
-            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition min-w-[40px] min-h-[40px] flex items-center justify-center"
+            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition min-w-[44px] min-h-[44px] flex items-center justify-center"
           >
             <X className="w-5 h-5" />
           </button>
@@ -88,10 +114,14 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
-              Nome do Item
+            <label
+              htmlFor="task-name-input"
+              className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5"
+            >
+              Nome da Task
             </label>
             <input
+              id="task-name-input"
               ref={inputRef}
               type="text"
               value={name}
@@ -103,9 +133,9 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
 
           {/* Quem vai levar? Apenas Leeo ou Marii */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+            <span className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
               Quem vai levar?
-            </label>
+            </span>
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
@@ -136,10 +166,14 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+            <label
+              htmlFor="task-category-select"
+              className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5"
+            >
               Categoria
             </label>
             <select
+              id="task-category-select"
               value={category}
               onChange={(e) => setCategory(e.target.value as CategoryId)}
               className="w-full px-3.5 py-3 sm:py-2.5 text-base sm:text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-ocean-500/20 focus:border-ocean-600 transition"
@@ -159,10 +193,10 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
               <span>Sugestões rápidas:</span>
             </div>
             <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1">
-              {QUICK_SUGGESTIONS.map((sug, idx) => (
+              {QUICK_SUGGESTIONS.map((sug) => (
                 <button
                   type="button"
-                  key={idx}
+                  key={sug.name}
                   onClick={() => handleSuggestionClick(sug)}
                   className="px-2.5 py-1.5 text-xs bg-slate-100 dark:bg-slate-800 hover:bg-ocean-50 dark:hover:bg-ocean-950/60 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-600 dark:text-slate-300 transition active:scale-95"
                 >
@@ -185,7 +219,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
               disabled={!name.trim()}
               className="flex-1 sm:flex-initial px-5 py-3 sm:py-2 text-sm font-medium text-white bg-ocean-600 rounded-xl hover:bg-ocean-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-sm shadow-ocean-500/20 min-h-[44px]"
             >
-              Adicionar Item
+              Adicionar Task
             </button>
           </div>
         </form>

@@ -1,4 +1,4 @@
-import { CategoryInfo, ChecklistItem } from '../types/checklist';
+import { CategoryInfo, CategoryId } from '../types/checklist';
 
 export const CATEGORIES: CategoryInfo[] = [
   {
@@ -33,5 +33,14 @@ export const CATEGORIES: CategoryInfo[] = [
   },
 ];
 
-// Lista inicial vazia (sem presets) conforme solicitado pelo usuário
-export const INITIAL_ITEMS: ChecklistItem[] = [];
+export const CATEGORY_MAP: Record<CategoryId, CategoryInfo> = CATEGORIES.reduce(
+  (acc, cat) => {
+    acc[cat.id] = cat;
+    return acc;
+  },
+  {} as Record<CategoryId, CategoryInfo>
+);
+
+export function isValidCategoryId(value: unknown): value is CategoryId {
+  return typeof value === 'string' && value in CATEGORY_MAP;
+}

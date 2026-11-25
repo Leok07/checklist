@@ -1,11 +1,12 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { ChecklistItem, CategoryId, PersonAssignment } from '../types/checklist';
-import { CATEGORIES } from '../data/defaultItems';
+import { CATEGORY_MAP } from '../data/defaultItems';
 import {
   isFirebaseConfigured,
   subscribeToTasks,
   addTaskAtomic,
   updateTaskCompletionAtomic,
+  batchUpdateCompletionAtomic,
   updateTaskDetailsAtomic,
   reassignTaskAtomic,
   deleteTaskAtomic,
@@ -13,15 +14,11 @@ import {
 } from '../services/firebase';
 
 const STORAGE_KEY = 'task_viagem_v4';
-
-// Limpeza de chaves antigas para garantir que presets antigos não reapareçam
-try {
-  localStorage.removeItem('checklist_praia_itens_v1');
-  localStorage.removeItem('checklist_praia_itens_v2');
-  localStorage.removeItem('checklist_praia_itens_v3');
-} catch {
-  // Ignora
-}
+const LEGACY_STORAGE_KEYS = [
+  'checklist_praia_itens_v1',
+  'checklist_praia_itens_v2',
+  'checklist_praia_itens_v3',
+];
 
 export function useChecklist() {
   const [items, setItems] = useState<ChecklistItem[]>(() => {
@@ -34,32 +31,48 @@ export function useChecklist() {
         }
       }
     } catch {
-      // Ignora erro
+      // Ignora erro de leitura do storage
     }
     return [];
   });
 
-  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+  // Referência sempre atualizada para leitura síncrona segura fora de updaters do React 18
+  const itemsRef = useRef<ChecklistItem[]>(items);
+  itemsRef.current = items;
+
+  const [pendingCloudOps, setPendingCloudOps] = useState(0);
+  const [isInitialLoading, setIsInitialLoading] = useState(isFirebaseConfigured);
   const [cloudError, setCloudError] = useState<string | null>(null);
+
+  const startCloudOp = useCallback(() => {
+    setPendingCloudOps((count) => count + 1);
+  }, []);
+
+  const endCloudOp = useCallback(() => {
+    setPendingCloudOps((count) => Math.max(0, count - 1));
+  }, []);
+
+  // Limpeza de chaves antigas dentro de useEffect (evita side-effect no escopo do módulo)
+  useEffect(() => {
+    try {
+      LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    } catch {
+      // Ignora
+    }
+  }, []);
 
   // Escuta atualizações da nuvem em tempo real (cada tarefa é um documento isolado)
   useEffect(() => {
     if (!isFirebaseConfigured) return;
 
-    setIsCloudSyncing(true);
     const unsubscribe = subscribeToTasks(
       (cloudItems) => {
         setItems(cloudItems);
-        setIsCloudSyncing(false);
+        setIsInitialLoading(false);
         setCloudError(null);
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(cloudItems));
-        } catch {
-          // Ignora
-        }
       },
       (errMsg) => {
-        setIsCloudSyncing(false);
+        setIsInitialLoading(false);
         setCloudError(errMsg);
       }
     );
@@ -67,16 +80,16 @@ export function useChecklist() {
     return () => unsubscribe();
   }, []);
 
-  // Salva no localStorage local como cache
+  // Única fonte de escrita no localStorage como cache
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
     } catch {
-      // Ignora
+      // Ignora erro de quota
     }
   }, [items]);
 
-  // Adicionar tarefa (atômico)
+  // Adicionar tarefa (atômico com rollback em erro)
   const addItem = useCallback(
     async (name: string, categoryId: CategoryId = 'geral', assignedTo: PersonAssignment = 'leeo') => {
       const trimmed = name.trim();
@@ -91,188 +104,244 @@ export function useChecklist() {
         createdAt: Date.now(),
       };
 
-      // Atualização otimista
       setItems((prev) => [newItem, ...prev.filter((i) => i.id !== newItem.id)]);
 
       if (isFirebaseConfigured) {
-        setIsCloudSyncing(true);
+        startCloudOp();
         const res = await addTaskAtomic(newItem);
-        setIsCloudSyncing(false);
-        if (!res.success && res.error) {
-          setCloudError(res.error);
+        endCloudOp();
+        if (!res.success) {
+          setItems((prev) => prev.filter((i) => i.id !== newItem.id));
+          setCloudError(res.error || 'Falha ao adicionar tarefa na nuvem.');
+          return false;
         }
+        setCloudError(null);
       }
 
       return true;
     },
-    []
+    [startCloudOp, endCloudOp]
   );
 
-  // Alternar conclusão (atômico - não altera nada do outro usuário)
+  // Alternar conclusão (leitura síncrona via ref + atualização atômica + rollback)
   const toggleItem = useCallback(
     async (id: string) => {
-      let targetCompleted = false;
+      const current = itemsRef.current.find((item) => item.id === id);
+      if (!current) return;
 
-      // Atualização otimista
+      const previousCompleted = current.completed;
+      const targetCompleted = !previousCompleted;
+
       setItems((prev) =>
-        prev.map((item) => {
-          if (item.id === id) {
-            targetCompleted = !item.completed;
-            return { ...item, completed: targetCompleted };
-          }
-          return item;
-        })
+        prev.map((item) =>
+          item.id === id ? { ...item, completed: targetCompleted } : item
+        )
       );
 
       if (isFirebaseConfigured) {
-        setIsCloudSyncing(true);
+        startCloudOp();
         const res = await updateTaskCompletionAtomic(id, targetCompleted);
-        setIsCloudSyncing(false);
-        if (!res.success && res.error) {
-          setCloudError(res.error);
+        endCloudOp();
+        if (!res.success) {
+          setItems((prev) =>
+            prev.map((item) =>
+              item.id === id ? { ...item, completed: previousCompleted } : item
+            )
+          );
+          setCloudError(res.error || 'Falha ao atualizar tarefa na nuvem.');
+        } else {
+          setCloudError(null);
         }
       }
     },
-    []
+    [startCloudOp, endCloudOp]
   );
 
-  // Remover tarefa (atômico)
+  // Remover tarefa (atômico com rollback)
   const removeItem = useCallback(
     async (id: string) => {
-      // Atualização otimista
+      const removedItem = itemsRef.current.find((item) => item.id === id);
+      if (!removedItem) return;
+
       setItems((prev) => prev.filter((item) => item.id !== id));
 
       if (isFirebaseConfigured) {
-        setIsCloudSyncing(true);
+        startCloudOp();
         const res = await deleteTaskAtomic(id);
-        setIsCloudSyncing(false);
-        if (!res.success && res.error) {
-          setCloudError(res.error);
+        endCloudOp();
+        if (!res.success) {
+          setItems((prev) => {
+            if (prev.some((i) => i.id === removedItem.id)) return prev;
+            return [removedItem, ...prev].sort(
+              (a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id)
+            );
+          });
+          setCloudError(res.error || 'Falha ao remover tarefa na nuvem.');
+        } else {
+          setCloudError(null);
         }
       }
     },
-    []
+    [startCloudOp, endCloudOp]
   );
 
-  // Editar tarefa (atômico)
+  // Editar tarefa (leitura síncrona via ref + atualização atômica + rollback)
   const editItem = useCallback(
     async (id: string, newName: string, newCategory?: CategoryId, newAssignedTo?: PersonAssignment) => {
       const trimmed = newName.trim();
       if (!trimmed) return false;
 
-      let finalCat: CategoryId = 'geral';
-      let finalAssigned: PersonAssignment = 'leeo';
+      const previousItem = itemsRef.current.find((item) => item.id === id);
+      if (!previousItem) return false;
+
+      const finalCat: CategoryId = newCategory ?? previousItem.categoryId;
+      const finalAssigned: PersonAssignment = newAssignedTo ?? previousItem.assignedTo;
 
       setItems((prev) =>
-        prev.map((item) => {
-          if (item.id === id) {
-            finalCat = newCategory || item.categoryId;
-            finalAssigned = newAssignedTo || item.assignedTo;
-            return {
-              ...item,
-              name: trimmed,
-              categoryId: finalCat,
-              assignedTo: finalAssigned,
-            };
-          }
-          return item;
-        })
+        prev.map((item) =>
+          item.id === id
+            ? { ...item, name: trimmed, categoryId: finalCat, assignedTo: finalAssigned }
+            : item
+        )
       );
 
       if (isFirebaseConfigured) {
-        setIsCloudSyncing(true);
+        startCloudOp();
         const res = await updateTaskDetailsAtomic(id, trimmed, finalCat, finalAssigned);
-        setIsCloudSyncing(false);
-        if (!res.success && res.error) {
-          setCloudError(res.error);
+        endCloudOp();
+        if (!res.success) {
+          setItems((prev) =>
+            prev.map((item) => (item.id === id ? previousItem : item))
+          );
+          setCloudError(res.error || 'Falha ao salvar edição na nuvem.');
+          return false;
         }
+        setCloudError(null);
       }
 
       return true;
     },
-    []
+    [startCloudOp, endCloudOp]
   );
 
-  // Transferir tarefa para a outra pessoa com 1 toque (atômico)
+  // Transferir tarefa para a outra pessoa com 1 toque (leitura síncrona via ref + rollback)
   const reassignItem = useCallback(
     async (id: string) => {
-      let nextAssigned: PersonAssignment = 'marii';
+      const current = itemsRef.current.find((item) => item.id === id);
+      if (!current) return;
+
+      const previousAssigned = current.assignedTo;
+      const nextAssigned: PersonAssignment = previousAssigned === 'leeo' ? 'marii' : 'leeo';
 
       setItems((prev) =>
-        prev.map((item) => {
-          if (item.id === id) {
-            nextAssigned = item.assignedTo === 'leeo' ? 'marii' : 'leeo';
-            return { ...item, assignedTo: nextAssigned };
-          }
-          return item;
-        })
+        prev.map((item) =>
+          item.id === id ? { ...item, assignedTo: nextAssigned } : item
+        )
       );
 
       if (isFirebaseConfigured) {
-        setIsCloudSyncing(true);
+        startCloudOp();
         const res = await reassignTaskAtomic(id, nextAssigned);
-        setIsCloudSyncing(false);
-        if (!res.success && res.error) {
-          setCloudError(res.error);
+        endCloudOp();
+        if (!res.success) {
+          setItems((prev) =>
+            prev.map((item) =>
+              item.id === id ? { ...item, assignedTo: previousAssigned } : item
+            )
+          );
+          setCloudError(res.error || 'Falha ao transferir tarefa na nuvem.');
+        } else {
+          setCloudError(null);
         }
       }
     },
-    []
+    [startCloudOp, endCloudOp]
   );
 
-  // Marcar todas de uma pessoa
+  // Marcar todas em lote (writeBatch + rollback)
   const checkAll = useCallback(
     async (person?: PersonAssignment) => {
-      const updated = items.map((item) => {
-        if (!person || item.assignedTo === person) {
-          return { ...item, completed: true };
-        }
-        return item;
-      });
-      setItems(updated);
+      const snapshot = itemsRef.current;
+      const toUpdateIds = snapshot
+        .filter((i) => (!person || i.assignedTo === person) && !i.completed)
+        .map((i) => i.id);
+
+      if (toUpdateIds.length === 0) return;
+      const idSet = new Set(toUpdateIds);
+
+      setItems((prev) =>
+        prev.map((item) => (idSet.has(item.id) ? { ...item, completed: true } : item))
+      );
 
       if (isFirebaseConfigured) {
-        const toUpdate = items.filter((i) => (!person || i.assignedTo === person) && !i.completed);
-        for (const it of toUpdate) {
-          await updateTaskCompletionAtomic(it.id, true);
+        startCloudOp();
+        const res = await batchUpdateCompletionAtomic(toUpdateIds, true);
+        endCloudOp();
+        if (!res.success) {
+          setItems((prev) =>
+            prev.map((item) => (idSet.has(item.id) ? { ...item, completed: false } : item))
+          );
+          setCloudError(res.error || 'Falha ao marcar tarefas na nuvem.');
+        } else {
+          setCloudError(null);
         }
       }
     },
-    [items]
+    [startCloudOp, endCloudOp]
   );
 
-  // Desmarcar todas de uma pessoa
+  // Desmarcar todas em lote (writeBatch + rollback)
   const uncheckAll = useCallback(
     async (person?: PersonAssignment) => {
-      const updated = items.map((item) => {
-        if (!person || item.assignedTo === person) {
-          return { ...item, completed: false };
-        }
-        return item;
-      });
-      setItems(updated);
+      const snapshot = itemsRef.current;
+      const toUpdateIds = snapshot
+        .filter((i) => (!person || i.assignedTo === person) && i.completed)
+        .map((i) => i.id);
+
+      if (toUpdateIds.length === 0) return;
+      const idSet = new Set(toUpdateIds);
+
+      setItems((prev) =>
+        prev.map((item) => (idSet.has(item.id) ? { ...item, completed: false } : item))
+      );
 
       if (isFirebaseConfigured) {
-        const toUpdate = items.filter((i) => (!person || i.assignedTo === person) && i.completed);
-        for (const it of toUpdate) {
-          await updateTaskCompletionAtomic(it.id, false);
+        startCloudOp();
+        const res = await batchUpdateCompletionAtomic(toUpdateIds, false);
+        endCloudOp();
+        if (!res.success) {
+          setItems((prev) =>
+            prev.map((item) => (idSet.has(item.id) ? { ...item, completed: true } : item))
+          );
+          setCloudError(res.error || 'Falha ao desmarcar tarefas na nuvem.');
+        } else {
+          setCloudError(null);
         }
       }
     },
-    [items]
+    [startCloudOp, endCloudOp]
   );
 
-  // Limpar todas as tarefas
+  // Limpar todas as tarefas em lote (writeBatch fatiado + rollback)
   const clearAllTasks = useCallback(async () => {
-    const ids = items.map((i) => i.id);
+    const snapshot = itemsRef.current;
+    const ids = snapshot.map((i) => i.id);
+    if (ids.length === 0) return;
+
     setItems([]);
 
-    if (isFirebaseConfigured && ids.length > 0) {
-      setIsCloudSyncing(true);
-      await clearAllTasksAtomic(ids);
-      setIsCloudSyncing(false);
+    if (isFirebaseConfigured) {
+      startCloudOp();
+      const res = await clearAllTasksAtomic(ids);
+      endCloudOp();
+      if (!res.success) {
+        setItems(snapshot);
+        setCloudError(res.error || 'Falha ao limpar tarefas na nuvem.');
+      } else {
+        setCloudError(null);
+      }
     }
-  }, [items]);
+  }, [startCloudOp, endCloudOp]);
 
   // Estatísticas
   const stats = useMemo(() => {
@@ -326,7 +395,7 @@ export function useChecklist() {
     } else {
       leeoItems.forEach((item) => {
         const mark = item.completed ? '[X]' : '[ ]';
-        const cat = CATEGORIES.find((c) => c.id === item.categoryId)?.label || '';
+        const cat = CATEGORY_MAP[item.categoryId]?.label || '';
         lines.push(`${mark} ${item.name} (${cat})`);
       });
     }
@@ -339,7 +408,7 @@ export function useChecklist() {
     } else {
       mariiItems.forEach((item) => {
         const mark = item.completed ? '[X]' : '[ ]';
-        const cat = CATEGORIES.find((c) => c.id === item.categoryId)?.label || '';
+        const cat = CATEGORY_MAP[item.categoryId]?.label || '';
         lines.push(`${mark} ${item.name} (${cat})`);
       });
     }
@@ -364,7 +433,7 @@ export function useChecklist() {
     exportAsText,
     stats,
     isCloudConfigured: isFirebaseConfigured,
-    isCloudSyncing,
+    isCloudSyncing: isInitialLoading || pendingCloudOps > 0,
     cloudError,
   };
 }
