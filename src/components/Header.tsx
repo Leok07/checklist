@@ -1,205 +1,303 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Copy, CheckSquare, Moon, Sun, Cloud, RefreshCw, AlertCircle, X } from 'lucide-react';
-import { Theme } from '../hooks/useTheme';
+import {
+  Search,
+  Copy,
+  Sun,
+  Sunset,
+  Moon,
+  Cloud,
+  RefreshCw,
+  AlertCircle,
+  MoreHorizontal,
+  CheckSquare,
+  Square,
+  Trash2,
+  X,
+} from 'lucide-react';
+import { AtmospherePreference, ViceAtmosphere } from '../types/checklist';
+import { getAtmosphereLabel } from '../hooks/useViceTheme';
+import { triggerHaptic } from '../motion/haptics';
 
 interface HeaderProps {
-  onOpenAddModal: () => void;
+  atmosphere: ViceAtmosphere;
+  preference: AtmospherePreference;
+  onCycleAtmosphere: () => void;
+  isSearchOpen: boolean;
+  hasActiveFilters: boolean;
+  onToggleSearch: () => void;
   onCopyList: () => void;
-  theme: Theme;
-  onToggleTheme: () => void;
-  isCloudConfigured?: boolean;
-  isCloudSyncing?: boolean;
-  cloudError?: string | null;
+  onCheckAll: () => void;
+  onUncheckAll: () => void;
+  onClearAll: () => void;
+  totalItems: number;
+  isCloudConfigured: boolean;
+  isCloudSyncing: boolean;
+  cloudError: string | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  onOpenAddModal,
+  atmosphere,
+  preference,
+  onCycleAtmosphere,
+  isSearchOpen,
+  hasActiveFilters,
+  onToggleSearch,
   onCopyList,
-  theme,
-  onToggleTheme,
-  isCloudConfigured = false,
-  isCloudSyncing = false,
-  cloudError = null,
+  onCheckAll,
+  onUncheckAll,
+  onClearAll,
+  totalItems,
+  isCloudConfigured,
+  isCloudSyncing,
+  cloudError,
 }) => {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [showErrorModal, setShowErrorModal] = useState(false);
 
   useEffect(() => {
-    if (!showErrorModal) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
+    if (!menuOpen && !showErrorModal) return;
+    const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        setMenuOpen(false);
+        setConfirmClear(false);
         setShowErrorModal(false);
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showErrorModal]);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen, showErrorModal]);
+
+  const AtmosphereIcon = atmosphere === 'day' ? Sun : atmosphere === 'sunset' ? Sunset : Moon;
+  const atmosphereText =
+    preference === 'auto'
+      ? `Auto · ${getAtmosphereLabel(atmosphere)}`
+      : getAtmosphereLabel(atmosphere);
 
   return (
-    <header className="pt-5 sm:pt-8 pb-5 border-b border-slate-200/80 dark:border-slate-800/90 mb-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-start justify-between sm:block">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-ocean-600 text-white flex items-center justify-center shadow-sm shadow-ocean-500/20 shrink-0">
-              <CheckSquare className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[11px] uppercase tracking-wider font-semibold text-ocean-600 dark:text-ocean-400 block">
-                  Viagem & Bagagem
-                </span>
-
-                {isCloudConfigured ? (
-                  cloudError ? (
-                    <button
-                      type="button"
-                      onClick={() => setShowErrorModal(true)}
-                      className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-900 cursor-pointer hover:bg-rose-100 transition"
-                      title="Clique para ver detalhes do erro do Firebase"
-                    >
-                      <AlertCircle className="w-2.5 h-2.5" />
-                      <span>Erro na nuvem (clique)</span>
-                    </button>
+    <header className="relative z-30 shrink-0 px-3 pt-safe pb-2.5 border-b border-[var(--vice-border)] bg-[var(--vice-shell-bg)] backdrop-blur-md">
+      <div className="flex items-center justify-between gap-2">
+        {/* Identidade + Status da Nuvem */}
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <h1 className="font-display text-lg font-black tracking-tight italic leading-none vice-title-text truncate">
+              TASK DE VIAGEM
+            </h1>
+            {isCloudConfigured ? (
+              cloudError ? (
+                <button
+                  type="button"
+                  onClick={() => setShowErrorModal(true)}
+                  aria-label="Ver erro de sincronização"
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-[#FF3B5C]/20 text-[#FF3B5C] border border-[#FF3B5C]/40"
+                >
+                  <AlertCircle className="w-2.5 h-2.5" />
+                  <span>Erro</span>
+                </button>
+              ) : (
+                <span
+                  title={isCloudSyncing ? 'Sincronizando com Firebase' : 'Nuvem sincronizada'}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-[#10F5A8]/15 text-[#10F5A8] border border-[#10F5A8]/30"
+                >
+                  {isCloudSyncing ? (
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin" />
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-                      {isCloudSyncing ? (
-                        <>
-                          <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                          Sincronizando
-                        </>
-                      ) : (
-                        <>
-                          <Cloud className="w-2.5 h-2.5" />
-                          Nuvem ativa
-                        </>
-                      )}
-                    </span>
-                  )
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
-                    Modo local
-                  </span>
-                )}
-              </div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-                Task de Viagem
-              </h1>
-            </div>
+                    <Cloud className="w-2.5 h-2.5" />
+                  )}
+                </span>
+              )
+            ) : null}
           </div>
 
-          {/* Toggle de Tema no Mobile */}
+          {/* Pilula clicavel do ciclo de atmosfera por hora real */}
           <button
             type="button"
-            onClick={onToggleTheme}
-            aria-label={theme === 'dark' ? 'Ativar modo claro' : 'Ativar modo escuro'}
-            className="sm:hidden p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 active:scale-95 transition min-h-[44px] min-w-[44px] flex items-center justify-center"
+            onClick={() => {
+              triggerHaptic('tap');
+              onCycleAtmosphere();
+            }}
+            className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold tracking-wide text-[var(--vice-text-secondary)] hover:text-[var(--vice-text-primary)] active:scale-95 transition-transform"
+            title="Alternar ciclo de tema (Auto pela hora real, Day, Sunset, Night)"
           >
-            {theme === 'dark' ? (
-              <Sun className="w-4 h-4 text-amber-400" />
-            ) : (
-              <Moon className="w-4 h-4 text-slate-600" />
-            )}
+            <AtmosphereIcon className="w-3 h-3 text-[#FFB84D]" />
+            <span>{atmosphereText}</span>
           </button>
         </div>
 
-        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-xl">
-          Organize sua viagem a dois com facilidade e sincronização em tempo real entre celulares.
-        </p>
-
-        {/* Barra de Ações Rápidas */}
-        <div className="flex items-center gap-2 pt-1 sm:pt-0">
+        {/* Acoes rapidas mobile (>=40px toque) */}
+        <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
-            onClick={onCopyList}
-            title="Copiar lista formatada para o WhatsApp ou anotações"
-            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800/90 border border-slate-300 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 active:scale-95 transition shadow-sm min-h-[44px]"
+            onClick={() => {
+              triggerHaptic('tap');
+              onToggleSearch();
+            }}
+            aria-label="Buscar e filtrar tarefas"
+            className={`relative w-10 h-10 rounded-xl border flex items-center justify-center active:scale-90 transition-transform ${
+              isSearchOpen || hasActiveFilters
+                ? 'border-[#00E5FF]/60 bg-[#00E5FF]/15 text-[#00E5FF]'
+                : 'border-[var(--vice-border)] bg-[var(--vice-surface-subtle)] text-[var(--vice-text-secondary)]'
+            }`}
           >
-            <Copy className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
-            <span>Copiar lista</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={onOpenAddModal}
-            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-medium text-white bg-ocean-600 rounded-xl hover:bg-ocean-700 active:scale-95 transition shadow-sm shadow-ocean-500/20 min-h-[44px]"
-          >
-            <Plus className="w-4 h-4 shrink-0" />
-            <span>Nova task</span>
-          </button>
-
-          {/* Toggle de Tema no Desktop */}
-          <button
-            type="button"
-            onClick={onToggleTheme}
-            aria-label={theme === 'dark' ? 'Ativar modo claro' : 'Ativar modo escuro'}
-            title={theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'}
-            className="hidden sm:inline-flex p-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 active:scale-95 transition shadow-sm min-h-[44px] min-w-[44px] items-center justify-center"
-          >
-            {theme === 'dark' ? (
-              <Sun className="w-4 h-4 text-amber-400" />
-            ) : (
-              <Moon className="w-4 h-4 text-slate-600" />
+            <Search className="w-4 h-4" />
+            {hasActiveFilters && (
+              <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[#FF2E93]" />
             )}
           </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic('tap');
+              onCopyList();
+            }}
+            aria-label="Copiar lista formatada"
+            title="Copiar lista para WhatsApp"
+            className="w-10 h-10 rounded-xl border border-[var(--vice-border)] bg-[var(--vice-surface-subtle)] text-[var(--vice-text-secondary)] flex items-center justify-center active:scale-90 transition-transform"
+          >
+            <Copy className="w-4 h-4" />
+          </button>
+
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic('tap');
+                setConfirmClear(false);
+                setMenuOpen((prev) => !prev);
+              }}
+              aria-label="Mais ações"
+              className="w-10 h-10 rounded-xl border border-[var(--vice-border)] bg-[var(--vice-surface-subtle)] text-[var(--vice-text-secondary)] flex items-center justify-center active:scale-90 transition-transform"
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
+
+            {menuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setConfirmClear(false);
+                  }}
+                />
+                <div className="absolute right-0 mt-2 w-52 z-50 rounded-2xl border border-[var(--vice-border-strong)] bg-[var(--vice-surface-strong)] shadow-2xl p-1.5 space-y-1">
+                  <button
+                    type="button"
+                    disabled={totalItems === 0}
+                    onClick={() => {
+                      triggerHaptic('check');
+                      onCheckAll();
+                      setMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold text-[var(--vice-text-primary)] hover:bg-[var(--vice-surface-subtle)] disabled:opacity-40"
+                  >
+                    <CheckSquare className="w-4 h-4 text-[#10F5A8]" />
+                    <span>Marcar todas</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={totalItems === 0}
+                    onClick={() => {
+                      triggerHaptic('tap');
+                      onUncheckAll();
+                      setMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold text-[var(--vice-text-primary)] hover:bg-[var(--vice-surface-subtle)] disabled:opacity-40"
+                  >
+                    <Square className="w-4 h-4 text-[var(--vice-text-muted)]" />
+                    <span>Desmarcar todas</span>
+                  </button>
+
+                  <div className="border-t border-[var(--vice-border)] my-1" />
+
+                  {confirmClear ? (
+                    <div className="p-2 rounded-xl bg-[#FF3B5C]/15 border border-[#FF3B5C]/35 space-y-2">
+                      <p className="text-[11px] font-semibold text-[#FF3B5C]">
+                        Apagar todas as {totalItems} tarefas?
+                      </p>
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmClear(false)}
+                          className="flex-1 py-1.5 rounded-lg text-[11px] font-semibold bg-[var(--vice-surface-subtle)] text-[var(--vice-text-primary)]"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            triggerHaptic('delete');
+                            onClearAll();
+                            setConfirmClear(false);
+                            setMenuOpen(false);
+                          }}
+                          className="flex-1 py-1.5 rounded-lg text-[11px] font-bold bg-[#FF3B5C] text-white"
+                        >
+                          Limpar
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={totalItems === 0}
+                      onClick={() => setConfirmClear(true)}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold text-[#FF3B5C] hover:bg-[#FF3B5C]/10 disabled:opacity-40"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Limpar toda a lista</span>
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Modal de Detalhes do Erro da Nuvem */}
+      {/* Modal de Diagnostico do Firebase */}
       {showErrorModal && cloudError && (
         <div
           role="dialog"
           aria-modal="true"
-          aria-labelledby="firebase-error-modal-title"
           onClick={() => setShowErrorModal(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-rose-200 dark:border-rose-900"
+            className="w-full max-w-sm rounded-2xl border border-[#FF3B5C]/40 bg-[var(--vice-sheet-bg)] p-5 shadow-2xl"
           >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
-              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
-                <AlertCircle className="w-5 h-5 shrink-0" />
-                <h3
-                  id="firebase-error-modal-title"
-                  className="text-base font-bold text-slate-900 dark:text-white"
-                >
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2 text-[#FF3B5C]">
+                <AlertCircle className="w-5 h-5" />
+                <h3 className="font-display font-bold text-sm text-[var(--vice-text-primary)]">
                   Diagnóstico do Firebase
                 </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setShowErrorModal(false)}
-                aria-label="Fechar diagnóstico"
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
+                aria-label="Fechar"
+                className="p-1 text-[var(--vice-text-muted)]"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-
-            <p className="text-xs sm:text-sm text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/50 p-3 rounded-xl border border-rose-200 dark:border-rose-900 mb-4 font-mono break-words">
+            <p className="text-xs font-mono p-3 rounded-xl bg-[#FF3B5C]/10 border border-[#FF3B5C]/30 text-[#FF3B5C] mb-3 break-words">
               {cloudError}
             </p>
-
-            <div className="text-xs text-slate-600 dark:text-slate-400 space-y-2 mb-5">
-              <p className="font-semibold text-slate-800 dark:text-slate-200">
-                Como configurar com segurança no Firebase:
-              </p>
-              <ol className="list-decimal pl-4 space-y-1">
-                <li>No menu da esquerda, vá em <strong>Firestore Database</strong> e verifique se o banco foi criado.</li>
-                <li>Na aba <strong>Regras (Rules)</strong>, restrinja o acesso apenas à coleção <code>viagem_tasks</code> validando os campos (<code>name</code>, <code>assignedTo in [&apos;leeo&apos;, &apos;marii&apos;]</code> e <code>completed is bool</code>).</li>
-                <li>Para maior segurança em produção, ative o <strong>Firebase App Check</strong> ou <strong>Authentication</strong>.</li>
-              </ol>
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowErrorModal(false)}
-                className="px-4 py-2 text-xs font-medium text-white bg-ocean-600 rounded-lg hover:bg-ocean-700 transition min-h-[40px]"
-              >
-                Entendi
-              </button>
-            </div>
+            <p className="text-[11px] text-[var(--vice-text-secondary)] leading-relaxed mb-4">
+              Verifique no Console do Firebase se o Firestore Database está ativo e se as regras da coleção{' '}
+              <code className="font-mono text-[#00E5FF]">viagem_tasks</code> permitem leitura e escrita válidas.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowErrorModal(false)}
+              className="w-full py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-[#00B4D8] to-[#FF2E93]"
+            >
+              Entendi
+            </button>
           </div>
         </div>
       )}

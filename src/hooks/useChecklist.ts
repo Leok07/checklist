@@ -1,33 +1,65 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { ChecklistItem, CategoryId, PersonAssignment } from '../types/checklist';
-import { CATEGORY_MAP } from '../data/defaultItems';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { ChecklistItem, PersonAssignment, TaskDraft } from '../types/checklist';
+import { withTaskDefaults } from '../data/customization';
+import { sortTasksDeterministic } from '../workers/taskProcessingCore';
+import { scheduleIdleTask } from '../utils/idleScheduler';
 import {
   isFirebaseConfigured,
   subscribeToTasks,
   addTaskAtomic,
   updateTaskCompletionAtomic,
+  updateTaskFullAtomic,
+  updateTaskOrderAndAssigneeAtomic,
+  updateTaskQuantityAtomic,
+  updateTaskSubtasksAtomic,
   batchUpdateCompletionAtomic,
-  updateTaskDetailsAtomic,
-  reassignTaskAtomic,
   deleteTaskAtomic,
   clearAllTasksAtomic,
 } from '../services/firebase';
 
-const STORAGE_KEY = 'task_viagem_v4';
+const STORAGE_KEY = 'task_viagem_v5';
 const LEGACY_STORAGE_KEYS = [
   'checklist_praia_itens_v1',
   'checklist_praia_itens_v2',
   'checklist_praia_itens_v3',
+  'task_viagem_v4',
 ];
+
+function computeTopOrder(list: ChecklistItem[], person: PersonAssignment): number {
+  const personItems = list.filter((i) => i.assignedTo === person);
+  if (personItems.length === 0) return 1000;
+  let minOrder = personItems[0].order;
+  for (let i = 1; i < personItems.length; i++) {
+    if (personItems[i].order < minOrder) minOrder = personItems[i].order;
+  }
+  return minOrder - 1000;
+}
+
+function computeFractionalOrder(targetList: ChecklistItem[], targetIndex: number): number {
+  if (targetList.length === 0) return 1000;
+  if (targetIndex <= 0) return targetList[0].order - 1000;
+  if (targetIndex >= targetList.length) return targetList[targetList.length - 1].order + 1000;
+  const prev = targetList[targetIndex - 1].order;
+  const next = targetList[targetIndex].order;
+  if (Math.abs(next - prev) < 0.0001) {
+    return prev + 0.00005;
+  }
+  return (prev + next) / 2;
+}
 
 export function useChecklist() {
   const [items, setItems] = useState<ChecklistItem[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem('task_viagem_v4');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed;
+          return sortTasksDeterministic(
+            parsed
+              .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
+              .map((row) => withTaskDefaults(row))
+              .filter((item) => item.name.length > 0)
+          );
         }
       }
     } catch {
@@ -36,10 +68,10 @@ export function useChecklist() {
     return [];
   });
 
-  // Referência sempre atualizada para leitura síncrona segura fora de updaters do React 18
   const itemsRef = useRef<ChecklistItem[]>(items);
   itemsRef.current = items;
 
+  const lastDeletedRef = useRef<ChecklistItem | null>(null);
   const [pendingCloudOps, setPendingCloudOps] = useState(0);
   const [isInitialLoading, setIsInitialLoading] = useState(isFirebaseConfigured);
   const [cloudError, setCloudError] = useState<string | null>(null);
@@ -52,16 +84,18 @@ export function useChecklist() {
     setPendingCloudOps((count) => Math.max(0, count - 1));
   }, []);
 
-  // Limpeza de chaves antigas dentro de useEffect (evita side-effect no escopo do módulo)
+  // Limpeza de chaves legadas em tempo ocioso (nunca trava frame de UI)
   useEffect(() => {
-    try {
-      LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
-    } catch {
-      // Ignora
-    }
+    return scheduleIdleTask(() => {
+      try {
+        LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+      } catch {
+        // Ignora
+      }
+    });
   }, []);
 
-  // Escuta atualizações da nuvem em tempo real (cada tarefa é um documento isolado)
+  // Escuta atualizacoes da nuvem em tempo real
   useEffect(() => {
     if (!isFirebaseConfigured) return;
 
@@ -80,31 +114,37 @@ export function useChecklist() {
     return () => unsubscribe();
   }, []);
 
-  // Única fonte de escrita no localStorage como cache
+  // Persistencia local agendada em requestIdleCallback (zero stutter em gestos)
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    } catch {
-      // Ignora erro de quota
-    }
+    const snapshot = items;
+    return scheduleIdleTask(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+      } catch {
+        // Ignora erro de quota
+      }
+    });
   }, [items]);
 
-  // Adicionar tarefa (atômico com rollback em erro)
+  // Adicionar tarefa customizada (atomico + rollback)
   const addItem = useCallback(
-    async (name: string, categoryId: CategoryId = 'geral', assignedTo: PersonAssignment = 'leeo') => {
-      const trimmed = name.trim();
-      if (!trimmed) return false;
+    async (draft: TaskDraft): Promise<ChecklistItem | null> => {
+      const trimmed = draft.name.trim();
+      if (!trimmed) return null;
 
+      const now = Date.now();
       const newItem: ChecklistItem = {
-        id: `task-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        ...draft,
+        id: `task-${now}-${Math.random().toString(36).substring(2, 7)}`,
         name: trimmed,
-        categoryId,
-        assignedTo,
+        note: draft.note.trim().slice(0, 180),
+        quantity: Math.min(99, Math.max(1, Math.round(draft.quantity || 1))),
         completed: false,
-        createdAt: Date.now(),
+        createdAt: now,
+        order: computeTopOrder(itemsRef.current, draft.assignedTo),
       };
 
-      setItems((prev) => [newItem, ...prev.filter((i) => i.id !== newItem.id)]);
+      setItems((prev) => sortTasksDeterministic([newItem, ...prev.filter((i) => i.id !== newItem.id)]));
 
       if (isFirebaseConfigured) {
         startCloudOp();
@@ -113,21 +153,21 @@ export function useChecklist() {
         if (!res.success) {
           setItems((prev) => prev.filter((i) => i.id !== newItem.id));
           setCloudError(res.error || 'Falha ao adicionar tarefa na nuvem.');
-          return false;
+          return null;
         }
         setCloudError(null);
       }
 
-      return true;
+      return newItem;
     },
     [startCloudOp, endCloudOp]
   );
 
-  // Alternar conclusão (leitura síncrona via ref + atualização atômica + rollback)
+  // Alternar conclusao (atomico + rollback)
   const toggleItem = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       const current = itemsRef.current.find((item) => item.id === id);
-      if (!current) return;
+      if (!current) return false;
 
       const previousCompleted = current.completed;
       const targetCompleted = !previousCompleted;
@@ -153,67 +193,39 @@ export function useChecklist() {
           setCloudError(null);
         }
       }
+
+      return targetCompleted;
     },
     [startCloudOp, endCloudOp]
   );
 
-  // Remover tarefa (atômico com rollback)
-  const removeItem = useCallback(
-    async (id: string) => {
-      const removedItem = itemsRef.current.find((item) => item.id === id);
-      if (!removedItem) return;
-
-      setItems((prev) => prev.filter((item) => item.id !== id));
-
-      if (isFirebaseConfigured) {
-        startCloudOp();
-        const res = await deleteTaskAtomic(id);
-        endCloudOp();
-        if (!res.success) {
-          setItems((prev) => {
-            if (prev.some((i) => i.id === removedItem.id)) return prev;
-            return [removedItem, ...prev].sort(
-              (a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id)
-            );
-          });
-          setCloudError(res.error || 'Falha ao remover tarefa na nuvem.');
-        } else {
-          setCloudError(null);
-        }
-      }
-    },
-    [startCloudOp, endCloudOp]
-  );
-
-  // Editar tarefa (leitura síncrona via ref + atualização atômica + rollback)
-  const editItem = useCallback(
-    async (id: string, newName: string, newCategory?: CategoryId, newAssignedTo?: PersonAssignment) => {
-      const trimmed = newName.trim();
+  // Atualizar todos os detalhes customizados da tarefa (atomico + rollback)
+  const updateItemFull = useCallback(
+    async (id: string, draft: TaskDraft): Promise<boolean> => {
+      const trimmed = draft.name.trim();
       if (!trimmed) return false;
 
       const previousItem = itemsRef.current.find((item) => item.id === id);
       if (!previousItem) return false;
 
-      const finalCat: CategoryId = newCategory ?? previousItem.categoryId;
-      const finalAssigned: PersonAssignment = newAssignedTo ?? previousItem.assignedTo;
+      const sanitizedDraft: TaskDraft = {
+        ...draft,
+        name: trimmed,
+        note: draft.note.trim().slice(0, 180),
+        quantity: Math.min(99, Math.max(1, Math.round(draft.quantity || 1))),
+      };
 
       setItems((prev) =>
-        prev.map((item) =>
-          item.id === id
-            ? { ...item, name: trimmed, categoryId: finalCat, assignedTo: finalAssigned }
-            : item
-        )
+        prev.map((item) => (item.id === id ? { ...item, ...sanitizedDraft } : item))
       );
 
       if (isFirebaseConfigured) {
         startCloudOp();
-        const res = await updateTaskDetailsAtomic(id, trimmed, finalCat, finalAssigned);
+        const res = await updateTaskFullAtomic(id, sanitizedDraft);
         endCloudOp();
         if (!res.success) {
-          setItems((prev) =>
-            prev.map((item) => (item.id === id ? previousItem : item))
-          );
-          setCloudError(res.error || 'Falha ao salvar edição na nuvem.');
+          setItems((prev) => prev.map((item) => (item.id === id ? previousItem : item)));
+          setCloudError(res.error || 'Falha ao salvar personalização na nuvem.');
           return false;
         }
         setCloudError(null);
@@ -224,32 +236,80 @@ export function useChecklist() {
     [startCloudOp, endCloudOp]
   );
 
-  // Transferir tarefa para a outra pessoa com 1 toque (leitura síncrona via ref + rollback)
-  const reassignItem = useCallback(
-    async (id: string) => {
+  // Mover entre Leeo/Marii e/ou reordenar verticalmente via indexacao fracionaria (1 doc atomico!)
+  const moveOrReorderItem = useCallback(
+    async (id: string, targetPerson: PersonAssignment, targetIndex: number): Promise<boolean> => {
       const current = itemsRef.current.find((item) => item.id === id);
-      if (!current) return;
+      if (!current) return false;
+
+      const othersInTarget = sortTasksDeterministic(
+        itemsRef.current.filter((i) => i.assignedTo === targetPerson && i.id !== id)
+      );
+      const nextOrder = computeFractionalOrder(othersInTarget, targetIndex);
+
+      if (current.assignedTo === targetPerson && Math.abs(current.order - nextOrder) < 0.00001) {
+        return false;
+      }
 
       const previousAssigned = current.assignedTo;
-      const nextAssigned: PersonAssignment = previousAssigned === 'leeo' ? 'marii' : 'leeo';
+      const previousOrder = current.order;
 
       setItems((prev) =>
-        prev.map((item) =>
-          item.id === id ? { ...item, assignedTo: nextAssigned } : item
+        sortTasksDeterministic(
+          prev.map((item) =>
+            item.id === id ? { ...item, assignedTo: targetPerson, order: nextOrder } : item
+          )
         )
       );
 
       if (isFirebaseConfigured) {
         startCloudOp();
-        const res = await reassignTaskAtomic(id, nextAssigned);
+        const res = await updateTaskOrderAndAssigneeAtomic(id, targetPerson, nextOrder);
         endCloudOp();
         if (!res.success) {
           setItems((prev) =>
-            prev.map((item) =>
-              item.id === id ? { ...item, assignedTo: previousAssigned } : item
+            sortTasksDeterministic(
+              prev.map((item) =>
+                item.id === id
+                  ? { ...item, assignedTo: previousAssigned, order: previousOrder }
+                  : item
+              )
             )
           );
-          setCloudError(res.error || 'Falha ao transferir tarefa na nuvem.');
+          setCloudError(res.error || 'Falha ao mover tarefa na nuvem.');
+          return false;
+        }
+        setCloudError(null);
+      }
+
+      return true;
+    },
+    [startCloudOp, endCloudOp]
+  );
+
+  // Incrementar/decrementar quantidade rapido no card (atomico + rollback)
+  const updateQuantity = useCallback(
+    async (id: string, delta: number) => {
+      const current = itemsRef.current.find((item) => item.id === id);
+      if (!current) return;
+
+      const previousQty = current.quantity;
+      const nextQty = Math.min(99, Math.max(1, previousQty + delta));
+      if (nextQty === previousQty) return;
+
+      setItems((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, quantity: nextQty } : item))
+      );
+
+      if (isFirebaseConfigured) {
+        startCloudOp();
+        const res = await updateTaskQuantityAtomic(id, nextQty);
+        endCloudOp();
+        if (!res.success) {
+          setItems((prev) =>
+            prev.map((item) => (item.id === id ? { ...item, quantity: previousQty } : item))
+          );
+          setCloudError(res.error || 'Falha ao atualizar quantidade na nuvem.');
         } else {
           setCloudError(null);
         }
@@ -258,17 +318,102 @@ export function useChecklist() {
     [startCloudOp, endCloudOp]
   );
 
-  // Marcar todas em lote (writeBatch + rollback)
+  // Alternar sub-task interna direto no card (atomico + rollback)
+  const toggleSubtask = useCallback(
+    async (taskId: string, subtaskId: string) => {
+      const current = itemsRef.current.find((item) => item.id === taskId);
+      if (!current) return;
+
+      const previousSubtasks = current.subtasks;
+      const nextSubtasks = previousSubtasks.map((sub) =>
+        sub.id === subtaskId ? { ...sub, done: !sub.done } : sub
+      );
+
+      setItems((prev) =>
+        prev.map((item) => (item.id === taskId ? { ...item, subtasks: nextSubtasks } : item))
+      );
+
+      if (isFirebaseConfigured) {
+        startCloudOp();
+        const res = await updateTaskSubtasksAtomic(taskId, nextSubtasks);
+        endCloudOp();
+        if (!res.success) {
+          setItems((prev) =>
+            prev.map((item) => (item.id === taskId ? { ...item, subtasks: previousSubtasks } : item))
+          );
+          setCloudError(res.error || 'Falha ao atualizar sub-tarefa na nuvem.');
+        } else {
+          setCloudError(null);
+        }
+      }
+    },
+    [startCloudOp, endCloudOp]
+  );
+
+  // Remover tarefa (atomico + guarda backup para Undo)
+  const removeItem = useCallback(
+    async (id: string): Promise<ChecklistItem | null> => {
+      const removedItem = itemsRef.current.find((item) => item.id === id);
+      if (!removedItem) return null;
+
+      lastDeletedRef.current = removedItem;
+      setItems((prev) => prev.filter((item) => item.id !== id));
+
+      if (isFirebaseConfigured) {
+        startCloudOp();
+        const res = await deleteTaskAtomic(id);
+        endCloudOp();
+        if (!res.success) {
+          setItems((prev) => {
+            if (prev.some((i) => i.id === removedItem.id)) return prev;
+            return sortTasksDeterministic([removedItem, ...prev]);
+          });
+          setCloudError(res.error || 'Falha ao remover tarefa na nuvem.');
+          return null;
+        }
+        setCloudError(null);
+      }
+
+      return removedItem;
+    },
+    [startCloudOp, endCloudOp]
+  );
+
+  // Desfazer ultima exclusao
+  const undoLastDelete = useCallback(async () => {
+    const item = lastDeletedRef.current;
+    if (!item) return false;
+    lastDeletedRef.current = null;
+
+    setItems((prev) => {
+      if (prev.some((i) => i.id === item.id)) return prev;
+      return sortTasksDeterministic([item, ...prev]);
+    });
+
+    if (isFirebaseConfigured) {
+      startCloudOp();
+      const res = await addTaskAtomic(item);
+      endCloudOp();
+      if (!res.success) {
+        setItems((prev) => prev.filter((i) => i.id !== item.id));
+        setCloudError(res.error || 'Falha ao restaurar tarefa na nuvem.');
+        return false;
+      }
+      setCloudError(null);
+    }
+
+    return true;
+  }, [startCloudOp, endCloudOp]);
+
   const checkAll = useCallback(
     async (person?: PersonAssignment) => {
       const snapshot = itemsRef.current;
       const toUpdateIds = snapshot
         .filter((i) => (!person || i.assignedTo === person) && !i.completed)
         .map((i) => i.id);
-
       if (toUpdateIds.length === 0) return;
-      const idSet = new Set(toUpdateIds);
 
+      const idSet = new Set(toUpdateIds);
       setItems((prev) =>
         prev.map((item) => (idSet.has(item.id) ? { ...item, completed: true } : item))
       );
@@ -290,17 +435,15 @@ export function useChecklist() {
     [startCloudOp, endCloudOp]
   );
 
-  // Desmarcar todas em lote (writeBatch + rollback)
   const uncheckAll = useCallback(
     async (person?: PersonAssignment) => {
       const snapshot = itemsRef.current;
       const toUpdateIds = snapshot
         .filter((i) => (!person || i.assignedTo === person) && i.completed)
         .map((i) => i.id);
-
       if (toUpdateIds.length === 0) return;
-      const idSet = new Set(toUpdateIds);
 
+      const idSet = new Set(toUpdateIds);
       setItems((prev) =>
         prev.map((item) => (idSet.has(item.id) ? { ...item, completed: false } : item))
       );
@@ -322,7 +465,6 @@ export function useChecklist() {
     [startCloudOp, endCloudOp]
   );
 
-  // Limpar todas as tarefas em lote (writeBatch fatiado + rollback)
   const clearAllTasks = useCallback(async () => {
     const snapshot = itemsRef.current;
     const ids = snapshot.map((i) => i.id);
@@ -343,95 +485,19 @@ export function useChecklist() {
     }
   }, [startCloudOp, endCloudOp]);
 
-  // Estatísticas
-  const stats = useMemo(() => {
-    const total = items.length;
-    const completed = items.filter((i) => i.completed).length;
-    const pending = total - completed;
-    const progressPercent = total > 0 ? Math.round((completed / total) * 100) : 0;
-
-    const leeoItems = items.filter((i) => i.assignedTo === 'leeo');
-    const leeoCompleted = leeoItems.filter((i) => i.completed).length;
-    const leeoPending = leeoItems.length - leeoCompleted;
-    const leeoPercent = leeoItems.length > 0 ? Math.round((leeoCompleted / leeoItems.length) * 100) : 0;
-
-    const mariiItems = items.filter((i) => i.assignedTo === 'marii');
-    const mariiCompleted = mariiItems.filter((i) => i.completed).length;
-    const mariiPending = mariiItems.length - mariiCompleted;
-    const mariiPercent = mariiItems.length > 0 ? Math.round((mariiCompleted / mariiItems.length) * 100) : 0;
-
-    return {
-      total,
-      completed,
-      pending,
-      progressPercent,
-      leeo: {
-        total: leeoItems.length,
-        completed: leeoCompleted,
-        pending: leeoPending,
-        progressPercent: leeoPercent,
-      },
-      marii: {
-        total: mariiItems.length,
-        completed: mariiCompleted,
-        pending: mariiPending,
-        progressPercent: mariiPercent,
-      },
-    };
-  }, [items]);
-
-  // Exportação limpa
-  const exportAsText = useCallback(() => {
-    const lines: string[] = [];
-    lines.push('TASK DE VIAGEM - LEEO E MARII');
-    lines.push(`Total: ${stats.completed}/${stats.total} tarefas concluídas (${stats.progressPercent}%)`);
-    lines.push('----------------------------------------');
-
-    lines.push('');
-    lines.push(`[ LEEO - ${stats.leeo.completed}/${stats.leeo.total} prontas (${stats.leeo.progressPercent}%) ]`);
-    const leeoItems = items.filter((i) => i.assignedTo === 'leeo');
-    if (leeoItems.length === 0) {
-      lines.push('(Nenhuma tarefa)');
-    } else {
-      leeoItems.forEach((item) => {
-        const mark = item.completed ? '[X]' : '[ ]';
-        const cat = CATEGORY_MAP[item.categoryId]?.label || '';
-        lines.push(`${mark} ${item.name} (${cat})`);
-      });
-    }
-
-    lines.push('');
-    lines.push(`[ MARII - ${stats.marii.completed}/${stats.marii.total} prontas (${stats.marii.progressPercent}%) ]`);
-    const mariiItems = items.filter((i) => i.assignedTo === 'marii');
-    if (mariiItems.length === 0) {
-      lines.push('(Nenhuma tarefa)');
-    } else {
-      mariiItems.forEach((item) => {
-        const mark = item.completed ? '[X]' : '[ ]';
-        const cat = CATEGORY_MAP[item.categoryId]?.label || '';
-        lines.push(`${mark} ${item.name} (${cat})`);
-      });
-    }
-
-    lines.push('');
-    lines.push('----------------------------------------');
-    lines.push('Gerado pelo Task de Viagem');
-
-    return lines.join('\n');
-  }, [items, stats]);
-
   return {
     items,
     addItem,
     toggleItem,
+    updateItemFull,
+    moveOrReorderItem,
+    updateQuantity,
+    toggleSubtask,
     removeItem,
-    editItem,
-    reassignItem,
+    undoLastDelete,
     checkAll,
     uncheckAll,
     clearAllTasks,
-    exportAsText,
-    stats,
     isCloudConfigured: isFirebaseConfigured,
     isCloudSyncing: isInitialLoading || pendingCloudOps > 0,
     cloudError,

@@ -10,8 +10,14 @@ import {
   writeBatch,
   Firestore,
 } from 'firebase/firestore';
-import { ChecklistItem, CategoryId, PersonAssignment } from '../types/checklist';
-import { isValidCategoryId } from '../data/defaultItems';
+import {
+  ChecklistItem,
+  PersonAssignment,
+  SubTask,
+  TaskDraft,
+} from '../types/checklist';
+import { withTaskDefaults } from '../data/customization';
+import { sortTasksDeterministic } from '../workers/taskProcessingCore';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
@@ -43,7 +49,7 @@ if (isFirebaseConfigured) {
 const COLLECTION_NAME = 'viagem_tasks';
 const FIRESTORE_BATCH_LIMIT = 450;
 
-interface CloudOpResult {
+export interface CloudOpResult {
   success: boolean;
   error?: string;
 }
@@ -64,9 +70,30 @@ function extractErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function serializeTaskDocument(item: ChecklistItem) {
+  return {
+    name: item.name,
+    categoryId: item.categoryId,
+    assignedTo: item.assignedTo,
+    completed: item.completed,
+    createdAt: item.createdAt,
+    order: item.order,
+    icon: item.icon,
+    accentColor: item.accentColor,
+    cardStyle: item.cardStyle,
+    quantity: item.quantity,
+    bag: item.bag,
+    priority: item.priority,
+    note: item.note,
+    tags: item.tags,
+    subtasks: item.subtasks,
+    updatedAt: Date.now(),
+  };
+}
+
 /**
  * Escuta atualizações da coleção de tarefas em tempo real.
- * Cada tarefa é um documento independente, evitando concorrência e sobrescrita mútua.
+ * Cada tarefa é um documento independente com retrocompatibilidade total.
  */
 export function subscribeToTasks(
   onUpdate: (items: ChecklistItem[]) => void,
@@ -86,20 +113,11 @@ export function subscribeToTasks(
       snapshot.forEach((docSnapshot) => {
         const data = docSnapshot.data();
         if (data && typeof data.name === 'string' && data.name.trim()) {
-          items.push({
-            id: docSnapshot.id,
-            name: data.name.trim(),
-            categoryId: isValidCategoryId(data.categoryId) ? data.categoryId : 'geral',
-            assignedTo: data.assignedTo === 'marii' ? 'marii' : 'leeo',
-            completed: Boolean(data.completed),
-            createdAt: Number(data.createdAt) || 0,
-          });
+          items.push(withTaskDefaults(data as Record<string, unknown>, docSnapshot.id));
         }
       });
 
-      // Ordenação determinística: mais recentes primeiro, com desempate por ID
-      items.sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
-      onUpdate(items);
+      onUpdate(sortTasksDeterministic(items));
     },
     (error) => {
       console.error('Falha na sincronização do Firebase:', error);
@@ -112,22 +130,12 @@ export function subscribeToTasks(
   return unsubscribe;
 }
 
-/**
- * Adiciona uma nova tarefa de forma atômica no Firestore
- */
 export async function addTaskAtomic(item: ChecklistItem): Promise<CloudOpResult> {
   if (!db) return { success: false, error: 'Firebase não está inicializado.' };
 
   try {
     const docRef = doc(db, COLLECTION_NAME, item.id);
-    await setDoc(docRef, {
-      name: item.name,
-      categoryId: item.categoryId,
-      assignedTo: item.assignedTo,
-      completed: item.completed,
-      createdAt: item.createdAt,
-      updatedAt: Date.now(),
-    });
+    await setDoc(docRef, serializeTaskDocument(item));
     return { success: true };
   } catch (error: unknown) {
     console.error('Erro ao adicionar tarefa:', error);
@@ -135,9 +143,6 @@ export async function addTaskAtomic(item: ChecklistItem): Promise<CloudOpResult>
   }
 }
 
-/**
- * Atualiza o status de conclusão de uma tarefa de forma atômica (não toca nos itens do outro)
- */
 export async function updateTaskCompletionAtomic(
   id: string,
   completed: boolean
@@ -157,9 +162,108 @@ export async function updateTaskCompletionAtomic(
   }
 }
 
-/**
- * Atualiza o status de conclusão de múltiplas tarefas em lote (chunks <= 450 docs)
- */
+export async function updateTaskFullAtomic(
+  id: string,
+  draft: TaskDraft
+): Promise<CloudOpResult> {
+  if (!db) return { success: false, error: 'Firebase não está inicializado.' };
+
+  try {
+    const docRef = doc(db, COLLECTION_NAME, id);
+    await updateDoc(docRef, {
+      name: draft.name,
+      categoryId: draft.categoryId,
+      assignedTo: draft.assignedTo,
+      icon: draft.icon,
+      accentColor: draft.accentColor,
+      cardStyle: draft.cardStyle,
+      quantity: draft.quantity,
+      bag: draft.bag,
+      priority: draft.priority,
+      note: draft.note,
+      tags: draft.tags,
+      subtasks: draft.subtasks,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  } catch (error: unknown) {
+    console.error('Erro ao atualizar tarefa:', error);
+    return { success: false, error: extractErrorMessage(error, 'Falha ao salvar alterações na nuvem.') };
+  }
+}
+
+export async function updateTaskOrderAndAssigneeAtomic(
+  id: string,
+  assignedTo: PersonAssignment,
+  order: number
+): Promise<CloudOpResult> {
+  if (!db) return { success: false, error: 'Firebase não está inicializado.' };
+
+  try {
+    const docRef = doc(db, COLLECTION_NAME, id);
+    await updateDoc(docRef, {
+      assignedTo,
+      order,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  } catch (error: unknown) {
+    console.error('Erro ao mover tarefa:', error);
+    return { success: false, error: extractErrorMessage(error, 'Falha ao mover tarefa na nuvem.') };
+  }
+}
+
+export async function updateTaskQuantityAtomic(
+  id: string,
+  quantity: number
+): Promise<CloudOpResult> {
+  if (!db) return { success: false, error: 'Firebase não está inicializado.' };
+
+  try {
+    const docRef = doc(db, COLLECTION_NAME, id);
+    await updateDoc(docRef, {
+      quantity,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  } catch (error: unknown) {
+    console.error('Erro ao atualizar quantidade:', error);
+    return { success: false, error: extractErrorMessage(error, 'Falha ao atualizar quantidade.') };
+  }
+}
+
+export async function updateTaskSubtasksAtomic(
+  id: string,
+  subtasks: SubTask[]
+): Promise<CloudOpResult> {
+  if (!db) return { success: false, error: 'Firebase não está inicializado.' };
+
+  try {
+    const docRef = doc(db, COLLECTION_NAME, id);
+    await updateDoc(docRef, {
+      subtasks,
+      updatedAt: Date.now(),
+    });
+    return { success: true };
+  } catch (error: unknown) {
+    console.error('Erro ao atualizar sub-tarefas:', error);
+    return { success: false, error: extractErrorMessage(error, 'Falha ao atualizar sub-tarefas.') };
+  }
+}
+
+export async function deleteTaskAtomic(id: string): Promise<CloudOpResult> {
+  if (!db) return { success: false, error: 'Firebase não está inicializado.' };
+
+  try {
+    const docRef = doc(db, COLLECTION_NAME, id);
+    await deleteDoc(docRef);
+    return { success: true };
+  } catch (error: unknown) {
+    console.error('Erro ao remover tarefa:', error);
+    return { success: false, error: extractErrorMessage(error, 'Falha ao remover na nuvem.') };
+  }
+}
+
 export async function batchUpdateCompletionAtomic(
   ids: string[],
   completed: boolean
@@ -185,73 +289,6 @@ export async function batchUpdateCompletionAtomic(
   }
 }
 
-/**
- * Atualiza os detalhes de uma tarefa de forma atômica
- */
-export async function updateTaskDetailsAtomic(
-  id: string,
-  name: string,
-  categoryId: CategoryId,
-  assignedTo: PersonAssignment
-): Promise<CloudOpResult> {
-  if (!db) return { success: false, error: 'Firebase não está inicializado.' };
-
-  try {
-    const docRef = doc(db, COLLECTION_NAME, id);
-    await updateDoc(docRef, {
-      name,
-      categoryId,
-      assignedTo,
-      updatedAt: Date.now(),
-    });
-    return { success: true };
-  } catch (error: unknown) {
-    console.error('Erro ao atualizar tarefa:', error);
-    return { success: false, error: extractErrorMessage(error, 'Falha ao atualizar na nuvem.') };
-  }
-}
-
-/**
- * Transfere a tarefa para a outra pessoa de forma atômica
- */
-export async function reassignTaskAtomic(
-  id: string,
-  assignedTo: PersonAssignment
-): Promise<CloudOpResult> {
-  if (!db) return { success: false, error: 'Firebase não está inicializado.' };
-
-  try {
-    const docRef = doc(db, COLLECTION_NAME, id);
-    await updateDoc(docRef, {
-      assignedTo,
-      updatedAt: Date.now(),
-    });
-    return { success: true };
-  } catch (error: unknown) {
-    console.error('Erro ao transferir tarefa:', error);
-    return { success: false, error: extractErrorMessage(error, 'Falha ao transferir na nuvem.') };
-  }
-}
-
-/**
- * Remove uma tarefa de forma atômica
- */
-export async function deleteTaskAtomic(id: string): Promise<CloudOpResult> {
-  if (!db) return { success: false, error: 'Firebase não está inicializado.' };
-
-  try {
-    const docRef = doc(db, COLLECTION_NAME, id);
-    await deleteDoc(docRef);
-    return { success: true };
-  } catch (error: unknown) {
-    console.error('Erro ao remover tarefa:', error);
-    return { success: false, error: extractErrorMessage(error, 'Falha ao remover na nuvem.') };
-  }
-}
-
-/**
- * Limpa todas as tarefas utilizando batch write fatiado (limite seguro <= 450 docs/batch)
- */
 export async function clearAllTasksAtomic(ids: string[]): Promise<CloudOpResult> {
   if (!db) return { success: false, error: 'Firebase não está inicializado.' };
   if (ids.length === 0) return { success: true };

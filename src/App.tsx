@@ -1,72 +1,222 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
+import { Search, X, Flame } from 'lucide-react';
 import { useChecklist } from './hooks/useChecklist';
-import { useTheme } from './hooks/useTheme';
-import { CategoryId, FilterStatus, PersonAssignment } from './types/checklist';
-import { CATEGORIES, CATEGORY_MAP } from './data/defaultItems';
+import { useViceTheme } from './hooks/useViceTheme';
+import { useTaskProcessor } from './workers/useTaskProcessor';
+import {
+  BagLocation,
+  CategoryId,
+  ChecklistItem,
+  FilterStatus,
+  PersonAssignment,
+  SplitSnapMode,
+  TaskDraft,
+  TaskPriority,
+} from './types/checklist';
+import { BAG_LOCATIONS, resolveAccentOption } from './data/customization';
+import { ViceAtmosphereBg } from './components/ViceAtmosphereBg';
 import { Header } from './components/Header';
-import { PersonColumn } from './components/PersonColumn';
-import { AddItemModal } from './components/AddItemModal';
-import { ActionToolbar } from './components/ActionToolbar';
+import { SplitStage, getSplitRatioFromSnap } from './components/SplitStage';
+import { ViceFab } from './components/ViceFab';
+import { TaskStudioSheet } from './components/TaskStudioSheet';
 import { Toast } from './components/Toast';
-import { Waves, Search, X } from 'lucide-react';
+import { NeonBurstCanvas, NeonBurstHandle } from './motion/NeonBurstCanvas';
+import { triggerHaptic } from './motion/haptics';
+
+interface ToastState {
+  message: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}
 
 export function App() {
   const {
     items,
     addItem,
     toggleItem,
+    updateItemFull,
+    moveOrReorderItem,
+    updateQuantity,
+    toggleSubtask,
     removeItem,
-    editItem,
-    reassignItem,
+    undoLastDelete,
     checkAll,
     uncheckAll,
     clearAllTasks,
-    exportAsText,
-    stats,
     isCloudConfigured,
     isCloudSyncing,
     cloudError,
   } = useChecklist();
 
-  const { theme, toggleTheme } = useTheme();
+  const { atmosphere, preference, cycleAtmosphere } = useViceTheme();
 
-  // Estados de busca e filtro
+  // Shell mobile-only ref (usado pelo FAB magnetico e Canvas de particulas)
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const burstRef = useRef<NeonBurstHandle | null>(null);
+
+  // Estados de interface
+  const [snapMode, setSnapMode] = useState<SplitSnapMode>('even');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('all');
-  const [selectedCategory, setSelectedCategory] = useState<CategoryId | 'all'>('all');
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [modalTargetPerson, setModalTargetPerson] = useState<PersonAssignment>('leeo');
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [categoryFilter] = useState<CategoryId | 'all'>('all');
+  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | 'all'>('all');
+  const [bagFilter, setBagFilter] = useState<BagLocation | 'all'>('all');
 
-  const showToast = useCallback((msg: string) => {
-    setToastMessage(msg);
+  const [studioOpen, setStudioOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<ChecklistItem | null>(null);
+  const [studioInitialPerson, setStudioInitialPerson] = useState<PersonAssignment>('leeo');
+  const [fabHoverTarget, setFabHoverTarget] = useState<PersonAssignment | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
+
+  const filterCriteria = useMemo(
+    () => ({
+      query: searchQuery,
+      status: statusFilter,
+      category: categoryFilter,
+      priority: priorityFilter,
+      bag: bagFilter,
+    }),
+    [searchQuery, statusFilter, categoryFilter, priorityFilter, bagFilter]
+  );
+
+  const { leeoItems, mariiItems, stats, generateExportAsync } = useTaskProcessor(
+    items,
+    filterCriteria
+  );
+
+  const hasActiveFilters = Boolean(
+    searchQuery.trim() ||
+      statusFilter !== 'all' ||
+      priorityFilter !== 'all' ||
+      bagFilter !== 'all'
+  );
+
+  const clearFilters = useCallback(() => {
+    setSearchQuery('');
+    setStatusFilter('all');
+    setPriorityFilter('all');
+    setBagFilter('all');
+  }, []);
+
+  const showToast = useCallback((message: string, actionLabel?: string, onAction?: () => void) => {
+    setToast({ message, actionLabel, onAction });
   }, []);
 
   const handleCloseToast = useCallback(() => {
-    setToastMessage(null);
+    setToast(null);
   }, []);
 
-  const handleCloseModal = useCallback(() => {
-    setIsAddModalOpen(false);
+  const handleOpenNewFor = useCallback((person: PersonAssignment) => {
+    setEditingItem(null);
+    setStudioInitialPerson(person);
+    setStudioOpen(true);
   }, []);
 
-  const handleOpenAdd = useCallback((person: PersonAssignment) => {
-    setModalTargetPerson(person);
-    setIsAddModalOpen(true);
+  const handleOpenCustomize = useCallback((item: ChecklistItem) => {
+    setEditingItem(item);
+    setStudioInitialPerson(item.assignedTo);
+    setStudioOpen(true);
   }, []);
 
-  const handleAddItem = useCallback(
-    async (name: string, categoryId: CategoryId, assignedTo: PersonAssignment) => {
-      const success = await addItem(name, categoryId, assignedTo);
-      if (success) {
-        showToast(`Task "${name}" adicionada para ${assignedTo === 'leeo' ? 'Leeo' : 'Marii'}.`);
+  const handleCloseStudio = useCallback(() => {
+    setStudioOpen(false);
+    setEditingItem(null);
+  }, []);
+
+  const handleSaveNew = useCallback(
+    async (draft: TaskDraft) => {
+      const created = await addItem(draft);
+      if (created) {
+        showToast(
+          `"${created.name}" adicionada para ${created.assignedTo === 'leeo' ? 'Leeo' : 'Marii'}.`
+        );
       }
     },
     [addItem, showToast]
   );
 
+  const handleSaveEdit = useCallback(
+    async (id: string, draft: TaskDraft) => {
+      const ok = await updateItemFull(id, draft);
+      if (ok) {
+        showToast(`"${draft.name}" atualizada.`);
+      }
+    },
+    [updateItemFull, showToast]
+  );
+
+  const handleToggle = useCallback(
+    async (id: string, clientX: number, clientY: number) => {
+      const target = items.find((i) => i.id === id);
+      const becameCompleted = await toggleItem(id);
+      if (becameCompleted && target) {
+        const accent = resolveAccentOption(target.accentColor, target.assignedTo);
+        burstRef.current?.burst(clientX, clientY, accent.hex, '#FFB84D');
+      }
+    },
+    [items, toggleItem]
+  );
+
+  const handleRemove = useCallback(
+    async (id: string) => {
+      const removed = await removeItem(id);
+      if (removed) {
+        showToast(`"${removed.name}" removida.`, 'Desfazer', () => {
+          triggerHaptic('snap');
+          void undoLastDelete();
+        });
+      }
+    },
+    [removeItem, showToast, undoLastDelete]
+  );
+
+  const handleMoveOrReorder = useCallback(
+    async (
+      id: string,
+      targetPerson: PersonAssignment,
+      targetIndex: number,
+      dropX: number,
+      dropY: number
+    ) => {
+      const current = items.find((i) => i.id === id);
+      const moved = await moveOrReorderItem(id, targetPerson, targetIndex);
+      if (moved && current) {
+        const switchedPerson = current.assignedTo !== targetPerson;
+        if (switchedPerson) {
+          triggerHaptic('transfer');
+          burstRef.current?.burst(
+            dropX,
+            dropY,
+            targetPerson === 'leeo' ? '#00F0FF' : '#FF2E93',
+            '#FFB84D'
+          );
+          showToast(
+            `"${current.name}" movida para ${targetPerson === 'leeo' ? 'Leeo' : 'Marii'}.`
+          );
+        } else {
+          triggerHaptic('snap');
+        }
+      }
+    },
+    [items, moveOrReorderItem, showToast]
+  );
+
+  const handleFabDropOnPerson = useCallback(
+    (person: PersonAssignment, x: number, y: number) => {
+      burstRef.current?.burst(
+        x,
+        y,
+        person === 'leeo' ? '#00F0FF' : '#FF2E93',
+        '#FFB84D'
+      );
+      handleOpenNewFor(person);
+    },
+    [handleOpenNewFor]
+  );
+
   const handleCopyList = useCallback(async () => {
-    const text = exportAsText();
+    const text = await generateExportAsync();
     try {
       await navigator.clipboard.writeText(text);
       showToast('Lista copiada para a área de transferência.');
@@ -79,202 +229,183 @@ export function App() {
       document.body.removeChild(textArea);
       showToast('Lista copiada com sucesso.');
     }
-  }, [exportAsText, showToast]);
+  }, [generateExportAsync, showToast]);
 
-  // Filtragem centralizada e estável
-  const { leeoItems, mariiItems } = useMemo(() => {
-    const normalizedQuery = searchQuery.toLowerCase().trim();
-    const leeo: typeof items = [];
-    const marii: typeof items = [];
-
-    for (const item of items) {
-      if (selectedCategory !== 'all' && item.categoryId !== selectedCategory) {
-        continue;
-      }
-      if (statusFilter === 'pending' && item.completed) {
-        continue;
-      }
-      if (statusFilter === 'completed' && !item.completed) {
-        continue;
-      }
-      if (normalizedQuery) {
-        const matchesName = item.name.toLowerCase().includes(normalizedQuery);
-        const matchesCat = CATEGORY_MAP[item.categoryId]?.label.toLowerCase().includes(normalizedQuery);
-        if (!matchesName && !matchesCat) {
-          continue;
-        }
-      }
-
-      if (item.assignedTo === 'leeo') {
-        leeo.push(item);
-      } else {
-        marii.push(item);
-      }
-    }
-
-    return { leeoItems: leeo, mariiItems: marii };
-  }, [items, selectedCategory, statusFilter, searchQuery]);
+  const splitRatio = getSplitRatioFromSnap(snapMode);
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F17] text-slate-800 dark:text-slate-100 flex flex-col justify-between transition-colors duration-200 selection:bg-ocean-500 selection:text-white">
-      <div className="max-w-6xl mx-auto px-3 sm:px-6 w-full pb-20 sm:pb-16">
-        {/* Cabeçalho */}
-        <Header
-          onOpenAddModal={() => handleOpenAdd('leeo')}
-          onCopyList={handleCopyList}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-          isCloudConfigured={isCloudConfigured}
-          isCloudSyncing={isCloudSyncing}
-          cloudError={cloudError}
+    <div className="h-[100dvh] w-full flex items-center justify-center overflow-hidden">
+      {/* Moldura Mobile-Only (100% tela cheia no celular; centralizada estilo app no desktop) */}
+      <div
+        ref={shellRef}
+        className="relative w-full max-w-[430px] h-[100dvh] sm:h-[min(100dvh,900px)] sm:rounded-[34px] sm:border sm:border-[var(--vice-border-strong)] sm:shadow-[0_24px_80px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden"
+      >
+        {/* Fundo Atmosferico GTA 6 (Day / Sunset / Night pela hora real) */}
+        <ViceAtmosphereBg atmosphere={atmosphere} />
+
+        {/* Canvas GPU-first de explosao neon ao concluir/transferir */}
+        <NeonBurstCanvas ref={burstRef} />
+
+        {/* Camada Interativa Principal */}
+        <div className="relative z-10 flex flex-col flex-1 min-h-0">
+          <Header
+            atmosphere={atmosphere}
+            preference={preference}
+            onCycleAtmosphere={cycleAtmosphere}
+            isSearchOpen={isSearchOpen}
+            hasActiveFilters={hasActiveFilters}
+            onToggleSearch={() => setIsSearchOpen((prev) => !prev)}
+            onCopyList={handleCopyList}
+            onCheckAll={() => void checkAll()}
+            onUncheckAll={() => void uncheckAll()}
+            onClearAll={() => void clearAllTasks()}
+            totalItems={stats.total}
+            isCloudConfigured={isCloudConfigured}
+            isCloudSyncing={isCloudSyncing}
+            cloudError={cloudError}
+          />
+
+          {/* Barra Expansivel de Busca & Filtros Rapidos */}
+          {isSearchOpen && (
+            <div className="shrink-0 px-3 py-2.5 border-b border-[var(--vice-border)] bg-[var(--vice-shell-bg)] backdrop-blur-md space-y-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--vice-text-muted)] pointer-events-none" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Buscar por nome, tag, nota ou mala..."
+                  aria-label="Buscar tarefas"
+                  className="w-full pl-9 pr-9 py-2 text-base sm:text-xs rounded-xl border border-[var(--vice-border-strong)] bg-[var(--vice-surface)] text-[var(--vice-text-primary)] placeholder:text-[var(--vice-text-muted)] focus:outline-none focus:border-[#00E5FF]"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    aria-label="Limpar busca"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--vice-text-muted)]"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {/* Chips horizontais rapidos */}
+              <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
+                {(['all', 'pending', 'completed'] as FilterStatus[]).map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic('tap');
+                      setStatusFilter(st);
+                    }}
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap border ${
+                      statusFilter === st
+                        ? 'border-[#00E5FF] bg-[#00E5FF]/20 text-[#00E5FF]'
+                        : 'border-[var(--vice-border)] bg-[var(--vice-surface-subtle)] text-[var(--vice-text-secondary)]'
+                    }`}
+                  >
+                    {st === 'all' ? 'Todas' : st === 'pending' ? 'Pendentes' : 'Prontas'}
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic('tap');
+                    setPriorityFilter((p) => (p === 'urgent' ? 'all' : 'urgent'));
+                  }}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap border ${
+                    priorityFilter === 'urgent'
+                      ? 'border-[#FF3B5C] bg-[#FF3B5C]/20 text-[#FF3B5C]'
+                      : 'border-[var(--vice-border)] bg-[var(--vice-surface-subtle)] text-[var(--vice-text-secondary)]'
+                  }`}
+                >
+                  <Flame className="w-3 h-3" />
+                  <span>Urgentes</span>
+                </button>
+
+                {BAG_LOCATIONS.map(({ id, label }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic('tap');
+                      setBagFilter((b) => (b === id ? 'all' : id));
+                    }}
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap border ${
+                      bagFilter === id
+                        ? 'border-[#FF2E93] bg-[#FF2E93]/20 text-[#FF4DA6]'
+                        : 'border-[var(--vice-border)] bg-[var(--vice-surface-subtle)] text-[var(--vice-text-secondary)]'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+
+                {hasActiveFilters && (
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap text-[#FFB84D]"
+                  >
+                    Limpar
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* PALCO MEIO A MEIO 50/50 COM DIVISOR CENTRAL NEON ARRASTAVEL */}
+          <SplitStage
+            leeoItems={leeoItems}
+            mariiItems={mariiItems}
+            stats={stats}
+            snapMode={snapMode}
+            onSnapModeChange={setSnapMode}
+            fabHoverTarget={fabHoverTarget}
+            onAdd={handleOpenNewFor}
+            onToggle={handleToggle}
+            onCustomize={handleOpenCustomize}
+            onRemove={handleRemove}
+            onUpdateQuantity={(id, delta) => void updateQuantity(id, delta)}
+            onToggleSubtask={(taskId, subId) => void toggleSubtask(taskId, subId)}
+            onMoveOrReorder={handleMoveOrReorder}
+          />
+        </div>
+
+        {/* BOTAO "+" FLUTUANTE MAGNETICO ARRASTAVEL */}
+        <ViceFab
+          containerRef={shellRef}
+          splitRatio={splitRatio}
+          hoverTarget={fabHoverTarget}
+          onHoverTargetChange={setFabHoverTarget}
+          onTap={() =>
+            handleOpenNewFor(snapMode === 'marii' ? 'marii' : 'leeo')
+          }
+          onDropOnPerson={handleFabDropOnPerson}
         />
 
-        {/* Barra Compacta de Busca e Filtros */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 mb-5 text-xs">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Pesquisar tarefas..."
-              aria-label="Pesquisar tarefas"
-              className="w-full pl-9 pr-9 py-2.5 sm:py-2 text-base sm:text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-ocean-500/20"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                aria-label="Limpar pesquisa"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
+        {/* ESTUDIO DE CRIACAO E CUSTOMIZACAO ABSURDA */}
+        <TaskStudioSheet
+          isOpen={studioOpen}
+          editingItem={editingItem}
+          initialPerson={studioInitialPerson}
+          onClose={handleCloseStudio}
+          onSaveNew={handleSaveNew}
+          onSaveEdit={handleSaveEdit}
+          onDelete={handleRemove}
+        />
 
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Filtro Status */}
-            <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700">
-              <button
-                type="button"
-                onClick={() => setStatusFilter('all')}
-                className={`px-3 py-2 sm:py-1.5 rounded-lg font-medium transition ${
-                  statusFilter === 'all'
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                }`}
-              >
-                Todas
-              </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter('pending')}
-                className={`px-3 py-2 sm:py-1.5 rounded-lg font-medium transition ${
-                  statusFilter === 'pending'
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                }`}
-              >
-                Pendentes
-              </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter('completed')}
-                className={`px-3 py-2 sm:py-1.5 rounded-lg font-medium transition ${
-                  statusFilter === 'completed'
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                }`}
-              >
-                Prontas
-              </button>
-            </div>
-
-            {/* Filtro Categoria */}
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value as CategoryId | 'all')}
-              aria-label="Filtrar por categoria"
-              className="py-2 sm:py-1.5 px-2.5 text-base sm:text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-700 dark:text-slate-300 font-medium"
-            >
-              <option value="all">Todas Categorias</option>
-              {CATEGORIES.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* TELA MEIO A MEIO (DIRETO AO PONTO COM DIVISOR CENTRAL) */}
-        <main className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-200 dark:divide-slate-800">
-            <PersonColumn
-              person="leeo"
-              name="Leeo"
-              emptyLabel="Nenhuma task para o Leeo."
-              addPromptLabel="+ Adicionar tarefa para o Leeo"
-              items={leeoItems}
-              stats={stats.leeo}
-              onAdd={handleOpenAdd}
-              onToggle={toggleItem}
-              onRemove={removeItem}
-              onEdit={editItem}
-              onReassign={reassignItem}
-            />
-
-            <PersonColumn
-              person="marii"
-              name="Marii"
-              emptyLabel="Nenhuma task para a Marii."
-              addPromptLabel="+ Adicionar tarefa para a Marii"
-              items={mariiItems}
-              stats={stats.marii}
-              onAdd={handleOpenAdd}
-              onToggle={toggleItem}
-              onRemove={removeItem}
-              onEdit={editItem}
-              onReassign={reassignItem}
-            />
-          </div>
-        </main>
-
-        {/* Ações em Massa */}
-        {items.length > 0 && (
-          <ActionToolbar
-            onCheckAll={() => checkAll()}
-            onUncheckAll={() => uncheckAll()}
-            onClearAll={clearAllTasks}
-            totalItems={stats.total}
-            filteredCount={leeoItems.length + mariiItems.length}
-          />
-        )}
+        {/* TOAST VICE COM AUTO-DISMISS E UNDO */}
+        <Toast
+          message={toast?.message ?? null}
+          actionLabel={toast?.actionLabel}
+          onAction={toast?.onAction}
+          onClose={handleCloseToast}
+        />
       </div>
-
-      {/* Rodapé Minimalista */}
-      <footer className="border-t border-slate-200/70 dark:border-slate-800/80 py-5 text-center text-xs text-slate-400 dark:text-slate-500">
-        <div className="flex items-center justify-center gap-1.5 mb-1">
-          <Waves className="w-4 h-4 text-ocean-500" />
-          <span className="font-semibold text-slate-700 dark:text-slate-300">Task de Viagem</span>
-        </div>
-        <p>Leeo e Marii</p>
-      </footer>
-
-      {/* Modal de Adição */}
-      <AddItemModal
-        isOpen={isAddModalOpen}
-        onClose={handleCloseModal}
-        onAdd={handleAddItem}
-        initialAssignedTo={modalTargetPerson}
-      />
-
-      {/* Toast */}
-      <Toast
-        message={toastMessage}
-        onClose={handleCloseToast}
-      />
     </div>
   );
 }

@@ -1,215 +1,451 @@
-import React, { useState } from 'react';
-import { Check, Trash2, Edit3, CheckCircle, X, ArrowLeftRight } from 'lucide-react';
-import { ChecklistItem, CategoryId, PersonAssignment } from '../types/checklist';
-import { CATEGORIES, CATEGORY_MAP } from '../data/defaultItems';
+import React from 'react';
+import {
+  Check,
+  SlidersHorizontal,
+  Trash2,
+  Flame,
+  Star,
+  Minus,
+  Plus,
+} from 'lucide-react';
+import { ChecklistItem } from '../types/checklist';
+import {
+  BAG_LOCATION_MAP,
+  TASK_ICON_MAP,
+  resolveAccentOption,
+} from '../data/customization';
+import { CardDragPayload, useSwipeAndDragCard } from '../motion/useSwipeAndDragCard';
+import { triggerHaptic } from '../motion/haptics';
+
+export type CardDensity = 'compact' | 'expanded' | 'rail';
 
 interface ItemCardProps {
   item: ChecklistItem;
-  onToggle: (id: string) => void;
+  density: CardDensity;
+  isBeingDragged?: boolean;
+  onToggle: (id: string, x: number, y: number) => void;
+  onCustomize: (item: ChecklistItem) => void;
   onRemove: (id: string) => void;
-  onEdit: (id: string, newName: string, categoryId?: CategoryId, assignedTo?: PersonAssignment) => void;
-  onReassign?: (id: string) => void;
+  onUpdateQuantity: (id: string, delta: number) => void;
+  onToggleSubtask: (taskId: string, subtaskId: string) => void;
+  onDragStart?: (payload: CardDragPayload) => void;
+  onDragMove?: (clientX: number, clientY: number, vx: number) => void;
+  onDragEnd?: (clientX: number, clientY: number) => void;
 }
 
-export const ItemCard: React.FC<ItemCardProps> = ({
-  item,
-  onToggle,
-  onRemove,
-  onEdit,
-  onReassign,
-}) => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedName, setEditedName] = useState(item.name);
-  const [editedCategory, setEditedCategory] = useState<CategoryId>(item.categoryId);
-  const [editedAssignedTo, setEditedAssignedTo] = useState<PersonAssignment>(item.assignedTo);
+export function getCardVisualStyles(item: ChecklistItem) {
+  const accent = resolveAccentOption(item.accentColor, item.assignedTo);
 
-  const category = CATEGORY_MAP[item.categoryId] ?? CATEGORIES[0];
+  let background = 'var(--vice-surface)';
+  let borderColor = 'var(--vice-border)';
+  let boxShadow = '0 4px 14px rgba(0, 0, 0, 0.14)';
 
-  const startEditing = () => {
-    setEditedName(item.name);
-    setEditedCategory(item.categoryId);
-    setEditedAssignedTo(item.assignedTo);
-    setIsEditing(true);
-  };
+  if (item.cardStyle === 'neon') {
+    background = 'var(--vice-surface-strong)';
+    borderColor = accent.hex;
+    boxShadow = accent.glow;
+  } else if (item.cardStyle === 'gradient') {
+    background = accent.gradient;
+    borderColor = `${accent.hex}66`;
+    boxShadow = '0 6px 18px rgba(0, 0, 0, 0.18)';
+  } else if (item.cardStyle === 'solid') {
+    background = 'var(--vice-surface-strong)';
+    borderColor = 'var(--vice-border-strong)';
+    boxShadow = '0 6px 16px rgba(0, 0, 0, 0.22)';
+  }
 
-  const cancelEditing = () => {
-    setEditedName(item.name);
-    setEditedCategory(item.categoryId);
-    setEditedAssignedTo(item.assignedTo);
-    setIsEditing(false);
-  };
+  return { accent, background, borderColor, boxShadow };
+}
 
-  const handleSave = () => {
-    if (editedName.trim()) {
-      onEdit(item.id, editedName, editedCategory, editedAssignedTo);
-      setIsEditing(false);
-    }
-  };
+export const ItemCard: React.FC<ItemCardProps> = React.memo(
+  ({
+    item,
+    density,
+    isBeingDragged = false,
+    onToggle,
+    onCustomize,
+    onRemove,
+    onUpdateQuantity,
+    onToggleSubtask,
+    onDragStart,
+    onDragMove,
+    onDragEnd,
+  }) => {
+    const { accent, background, borderColor, boxShadow } = getCardVisualStyles(item);
+    const IconComp = TASK_ICON_MAP[item.icon] ?? TASK_ICON_MAP.sparkles;
+    const bagMeta = BAG_LOCATION_MAP[item.bag];
+    const BagIcon = bagMeta?.Icon;
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleSave();
-    } else if (e.key === 'Escape') {
-      cancelEditing();
-    }
-  };
+    const { surfaceRef, rightRevealRef, leftRevealRef, deleteHintRef, gestureHandlers } =
+      useSwipeAndDragCard({
+        itemId: item.id,
+        disabled: isBeingDragged,
+        onTapToggle: onToggle,
+        onSwipeComplete: onToggle,
+        onSwipeEdit: () => onCustomize(item),
+        onSwipeDelete: onRemove,
+        onDragStart,
+        onDragMove,
+        onDragEnd,
+      });
 
-  if (isEditing) {
-    return (
-      <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-ocean-500 shadow-md flex flex-col gap-2.5 transition text-xs">
-        <input
-          type="text"
-          value={editedName}
-          onChange={(e) => setEditedName(e.target.value)}
-          onKeyDown={handleKeyDown}
-          autoFocus
-          aria-label="Nome da tarefa"
-          className="w-full px-3 py-2 text-base sm:text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-ocean-500/30"
-          placeholder="Nome da tarefa"
-        />
-        <div className="grid grid-cols-2 gap-2">
-          <select
-            value={editedCategory}
-            onChange={(e) => setEditedCategory(e.target.value as CategoryId)}
-            aria-label="Categoria da tarefa"
-            className="w-full px-2 py-2 sm:py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-lg text-base sm:text-xs"
+    const completedSubtasks = item.subtasks.filter((s) => s.done).length;
+    const totalSubtasks = item.subtasks.length;
+    const subtaskRatio = totalSubtasks > 0 ? completedSubtasks / totalSubtasks : 0;
+
+    // MODO RAIL (Coluna reduzida a 24% quando o divisor e arrastado)
+    if (density === 'rail') {
+      return (
+        <div
+          className="relative rounded-2xl overflow-hidden gpu-card-contain"
+          style={{ opacity: isBeingDragged ? 0.25 : 1 }}
+        >
+          <div
+            ref={surfaceRef}
+            {...gestureHandlers}
+            className="relative rounded-2xl p-2 border flex flex-col items-center justify-center gap-1 select-none touch-pan-y cursor-pointer"
+            style={{
+              background,
+              borderColor: item.completed ? 'var(--vice-border)' : borderColor,
+              opacity: item.completed ? 0.55 : 1,
+            }}
           >
-            {CATEGORIES.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={editedAssignedTo}
-            onChange={(e) => setEditedAssignedTo(e.target.value as PersonAssignment)}
-            aria-label="Responsável pela tarefa"
-            className="w-full px-2 py-2 sm:py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-lg text-base sm:text-xs font-semibold"
-          >
-            <option value="leeo">Leeo</option>
-            <option value="marii">Marii</option>
-          </select>
+            {item.priority === 'urgent' && !item.completed && (
+              <span
+                aria-hidden="true"
+                className="vice-urgent-aura pointer-events-none absolute inset-0 rounded-2xl border-2 border-[#FF3B5C]"
+              />
+            )}
+            <div
+              className="w-8 h-8 rounded-xl flex items-center justify-center relative"
+              style={{
+                backgroundColor: item.completed ? accent.hex : accent.softBg,
+                color: item.completed ? '#080412' : accent.hex,
+              }}
+            >
+              {item.completed ? (
+                <Check className="w-4 h-4 stroke-[3]" />
+              ) : (
+                <IconComp className="w-4 h-4" />
+              )}
+              {item.quantity > 1 && (
+                <span className="absolute -top-1.5 -right-1.5 px-1 rounded-full text-[9px] font-black bg-[#080412] text-white border border-white/25">
+                  {item.quantity}
+                </span>
+              )}
+            </div>
+            <span
+              className={`text-[10px] font-semibold text-center leading-tight line-clamp-1 w-full ${
+                item.completed
+                  ? 'line-through text-[var(--vice-text-muted)]'
+                  : 'text-[var(--vice-text-primary)]'
+              }`}
+            >
+              {item.name}
+            </span>
+          </div>
         </div>
-        <div className="flex justify-end gap-1.5 pt-1">
-          <button
-            type="button"
-            onClick={cancelEditing}
-            aria-label="Cancelar edição"
-            className="px-3 py-2 sm:py-1 text-xs text-slate-500 hover:text-slate-800 dark:hover:text-white rounded-lg bg-slate-100 dark:bg-slate-800 min-h-[40px] sm:min-h-[32px] flex items-center justify-center"
-          >
-            <X className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            className="px-3.5 py-2 sm:py-1 text-xs text-white rounded-lg bg-ocean-600 hover:bg-ocean-700 flex items-center gap-1 font-medium min-h-[40px] sm:min-h-[32px]"
-          >
-            <CheckCircle className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-            Salvar
-          </button>
+      );
+    }
+
+    const isExpanded = density === 'expanded';
+
+    return (
+      <div
+        className="relative rounded-2xl overflow-hidden gpu-card-contain"
+        style={{ opacity: isBeingDragged ? 0.22 : 1 }}
+      >
+        {/* Camada de acao Swipe Direita (Concluir) - GPU opacity-only */}
+        <div
+          ref={rightRevealRef}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 rounded-2xl flex items-center justify-start pl-3.5"
+          style={{
+            opacity: 0,
+            background: 'linear-gradient(90deg, rgba(16, 245, 168, 0.32), rgba(0, 229, 255, 0.14))',
+          }}
+        >
+          <div className="flex items-center gap-1.5 text-[#10F5A8] text-[11px] font-bold">
+            <Check className="w-4 h-4 stroke-[3]" />
+            <span>{item.completed ? 'Reabrir' : 'Pronto'}</span>
+          </div>
+        </div>
+
+        {/* Camada de acao Swipe Esquerda Estagio 1 (Personalizar) */}
+        <div
+          ref={leftRevealRef}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 rounded-2xl flex items-center justify-end pr-3.5"
+          style={{
+            opacity: 0,
+            background: 'linear-gradient(270deg, rgba(255, 46, 147, 0.34), rgba(168, 85, 247, 0.14))',
+          }}
+        >
+          <div className="flex items-center gap-1 text-[#FF4DA6] text-[11px] font-bold">
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span>Estilo</span>
+          </div>
+        </div>
+
+        {/* Camada de acao Swipe Esquerda Estagio 2 (Excluir) */}
+        <div
+          ref={deleteHintRef}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 rounded-2xl flex items-center justify-end pr-3.5"
+          style={{
+            opacity: 0,
+            background: 'linear-gradient(270deg, rgba(255, 59, 92, 0.85), rgba(255, 46, 147, 0.35))',
+          }}
+        >
+          <div className="flex items-center gap-1 text-white text-[11px] font-black">
+            <Trash2 className="w-4 h-4" />
+            <span>Solte p/ apagar</span>
+          </div>
+        </div>
+
+        {/* Superficie GPU Arrastavel do Card */}
+        <div
+          ref={surfaceRef}
+          {...gestureHandlers}
+          className={`relative rounded-2xl border select-none touch-pan-y cursor-pointer ${
+            isExpanded ? 'p-3' : 'p-2.5'
+          }`}
+          style={{
+            background,
+            borderColor: item.completed ? 'var(--vice-border)' : borderColor,
+            boxShadow: item.completed ? 'none' : boxShadow,
+          }}
+        >
+          {/* Aura pulsante GPU-only para prioridade urgente */}
+          {item.priority === 'urgent' && !item.completed && (
+            <span
+              aria-hidden="true"
+              className="vice-urgent-aura pointer-events-none absolute inset-0 rounded-2xl border-[1.5px] border-[#FF3B5C]"
+              style={{ boxShadow: 'inset 0 0 14px rgba(255, 59, 92, 0.25)' }}
+            />
+          )}
+
+          {/* Faixa lateral neon de identificacao */}
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-r-full"
+            style={{
+              backgroundColor: accent.hex,
+              opacity: item.completed ? 0.35 : 0.95,
+            }}
+          />
+
+          {/* Linha Principal: Icone + Titulo + Botao Personalizar */}
+          <div className="flex items-start gap-2 pl-1">
+            <div
+              className="w-7 h-7 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-transform"
+              style={{
+                backgroundColor: item.completed ? accent.hex : accent.softBg,
+                color: item.completed ? '#080412' : accent.hex,
+              }}
+            >
+              {item.completed ? (
+                <Check className="w-4 h-4 stroke-[3]" />
+              ) : (
+                <IconComp className="w-3.5 h-3.5" />
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start justify-between gap-1">
+                <p
+                  className={`font-semibold leading-snug break-words ${
+                    isExpanded ? 'text-sm' : 'text-[12.5px] line-clamp-2'
+                  } ${
+                    item.completed
+                      ? 'line-through text-[var(--vice-text-muted)]'
+                      : 'text-[var(--vice-text-primary)]'
+                  }`}
+                >
+                  {item.name}
+                </p>
+
+                <button
+                  type="button"
+                  data-no-gesture="true"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    triggerHaptic('tap');
+                    onCustomize(item);
+                  }}
+                  aria-label={`Personalizar ${item.name}`}
+                  className="-mr-1 -mt-1 w-7 h-7 rounded-lg flex items-center justify-center text-[var(--vice-text-muted)] hover:text-[var(--vice-text-primary)] active:scale-90 transition-transform shrink-0"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Meta Chips Compactos */}
+              <div className="mt-1.5 flex items-center flex-wrap gap-1">
+                {item.quantity > 1 && !isExpanded && (
+                  <span
+                    className="px-1.5 py-0.5 rounded-md text-[10px] font-black leading-none"
+                    style={{ backgroundColor: accent.softBg, color: accent.hex }}
+                  >
+                    x{item.quantity}
+                  </span>
+                )}
+
+                {item.priority === 'urgent' && !item.completed && (
+                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase bg-[#FF3B5C]/20 text-[#FF3B5C]">
+                    <Flame className="w-2.5 h-2.5" />
+                    {isExpanded ? 'Urgente' : '!'}
+                  </span>
+                )}
+
+                {item.priority === 'essential' && !item.completed && (
+                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-[#FFB84D]/20 text-[#FFB84D]">
+                    <Star className="w-2.5 h-2.5" />
+                    {isExpanded ? 'Essencial' : ''}
+                  </span>
+                )}
+
+                {BagIcon && (
+                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-semibold bg-[var(--vice-surface-subtle)] text-[var(--vice-text-secondary)]">
+                    <BagIcon className="w-2.5 h-2.5" />
+                    {isExpanded && <span>{bagMeta.label}</span>}
+                  </span>
+                )}
+
+                {totalSubtasks > 0 && !isExpanded && (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-[var(--vice-surface-subtle)] text-[var(--vice-text-secondary)]">
+                    {completedSubtasks}/{totalSubtasks}
+                  </span>
+                )}
+
+                {!isExpanded && item.tags[0] && (
+                  <span className="text-[9px] font-semibold text-[var(--vice-text-muted)] truncate max-w-[68px]">
+                    #{item.tags[0]}
+                  </span>
+                )}
+              </div>
+
+              {/* Mini barra de sub-tasks (GPU scaleX) no modo 50/50 */}
+              {!isExpanded && totalSubtasks > 0 && (
+                <div className="mt-1.5 h-1 w-full rounded-full bg-[var(--vice-surface-subtle)] overflow-hidden">
+                  <div
+                    className="h-full w-full rounded-full origin-left transition-transform duration-200"
+                    style={{
+                      backgroundColor: accent.hex,
+                      transform: `scaleX(${subtaskRatio})`,
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* Detalhes Ricos no Modo Expandido (76%) */}
+              {isExpanded && (
+                <div className="mt-2 space-y-2">
+                  {item.note && (
+                    <p className="text-[11px] leading-snug text-[var(--vice-text-secondary)] bg-[var(--vice-surface-subtle)] px-2.5 py-1.5 rounded-xl">
+                      {item.note}
+                    </p>
+                  )}
+
+                  {/* Tags Customizadas */}
+                  {item.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {item.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                          style={{ backgroundColor: accent.softBg, color: accent.hex }}
+                        >
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Sub-checklist Interativo */}
+                  {totalSubtasks > 0 && (
+                    <div className="space-y-1 pt-0.5">
+                      {item.subtasks.map((sub) => (
+                        <button
+                          key={sub.id}
+                          type="button"
+                          data-no-gesture="true"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            triggerHaptic('tap');
+                            onToggleSubtask(item.id, sub.id);
+                          }}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg bg-[var(--vice-surface-subtle)] text-left active:scale-[0.98] transition-transform"
+                        >
+                          <span
+                            className="w-4 h-4 rounded flex items-center justify-center shrink-0 border"
+                            style={{
+                              borderColor: sub.done ? accent.hex : 'var(--vice-border-strong)',
+                              backgroundColor: sub.done ? accent.hex : 'transparent',
+                              color: '#080412',
+                            }}
+                          >
+                            {sub.done && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                          </span>
+                          <span
+                            className={`text-[11px] font-medium truncate ${
+                              sub.done
+                                ? 'line-through text-[var(--vice-text-muted)]'
+                                : 'text-[var(--vice-text-primary)]'
+                            }`}
+                          >
+                            {sub.text}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Stepper de Quantidade Rapido */}
+                  <div className="flex items-center justify-between pt-1 border-t border-[var(--vice-border)]">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--vice-text-muted)]">
+                      Quantidade
+                    </span>
+                    <div className="inline-flex items-center gap-1 bg-[var(--vice-surface-subtle)] rounded-xl p-0.5 border border-[var(--vice-border)]">
+                      <button
+                        type="button"
+                        data-no-gesture="true"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          triggerHaptic('tap');
+                          onUpdateQuantity(item.id, -1);
+                        }}
+                        aria-label="Diminuir quantidade"
+                        className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--vice-text-primary)] active:scale-90 transition-transform"
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="min-w-[24px] text-center text-xs font-black" style={{ color: accent.hex }}>
+                        {item.quantity}
+                      </span>
+                      <button
+                        type="button"
+                        data-no-gesture="true"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          triggerHaptic('tap');
+                          onUpdateQuantity(item.id, 1);
+                        }}
+                        aria-label="Aumentar quantidade"
+                        className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--vice-text-primary)] active:scale-90 transition-transform"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     );
   }
+);
 
-  const isLeeo = item.assignedTo === 'leeo';
-
-  return (
-    <div
-      className={`group relative flex items-center justify-between p-2 sm:p-3 rounded-xl border transition-all duration-150 ${
-        item.completed
-          ? 'bg-slate-50/70 dark:bg-slate-900/30 border-slate-200/50 dark:border-slate-800/50 text-slate-400 dark:text-slate-500'
-          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 hover:border-slate-300 dark:hover:border-slate-700 shadow-sm'
-      }`}
-    >
-      {/* Área Principal Clicável */}
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => onToggle(item.id)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onToggle(item.id);
-          }
-        }}
-        aria-pressed={item.completed}
-        className="flex items-center gap-2.5 flex-1 min-w-0 pr-1 cursor-pointer select-none active:opacity-75 min-h-[44px] sm:min-h-0"
-      >
-        {/* Checkbox */}
-        <div
-          className={`w-5 h-5 rounded-md flex items-center justify-center transition-colors border shrink-0 ${
-            item.completed
-              ? isLeeo
-                ? 'bg-sky-600 border-sky-600 text-white'
-                : 'bg-violet-600 border-violet-600 text-white'
-              : 'border-slate-300 dark:border-slate-600 hover:border-ocean-500 bg-white dark:bg-slate-800'
-          }`}
-        >
-          {item.completed && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
-        </div>
-
-        {/* Textos */}
-        <div className="min-w-0 flex-1">
-          <p
-            className={`text-xs sm:text-sm font-medium leading-tight break-words transition-all ${
-              item.completed
-                ? 'line-through text-slate-400 dark:text-slate-500'
-                : 'text-slate-800 dark:text-slate-100'
-            }`}
-          >
-            {item.name}
-          </p>
-          <span className="inline-block text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
-            {category.label}
-          </span>
-        </div>
-      </div>
-
-      {/* Ações Rápidas com alvo de toque confortável */}
-      <div className="flex items-center gap-0.5 shrink-0">
-        {onReassign && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onReassign(item.id);
-            }}
-            aria-label={isLeeo ? `Passar ${item.name} para Marii` : `Passar ${item.name} para Leeo`}
-            title={isLeeo ? 'Passar tarefa para Marii' : 'Passar tarefa para Leeo'}
-            className="min-w-[40px] min-h-[40px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center text-slate-400 hover:text-ocean-600 dark:hover:text-ocean-400 hover:bg-ocean-50 dark:hover:bg-ocean-950/40 rounded-lg transition"
-          >
-            <ArrowLeftRight className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-          </button>
-        )}
-
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            startEditing();
-          }}
-          aria-label={`Editar ${item.name}`}
-          title="Editar tarefa"
-          className="min-w-[40px] min-h-[40px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition"
-        >
-          <Edit3 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-        </button>
-
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove(item.id);
-          }}
-          aria-label={`Remover ${item.name}`}
-          title="Remover tarefa"
-          className="min-w-[40px] min-h-[40px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition"
-        >
-          <Trash2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-        </button>
-      </div>
-    </div>
-  );
-};
+ItemCard.displayName = 'ItemCard';
