@@ -37,7 +37,6 @@ import {
   AccentColorId,
   BagLocation,
   CardStyle,
-  CategoryId,
   ChecklistItem,
   PersonAssignment,
   SubTask,
@@ -99,6 +98,7 @@ export interface AccentOption {
   id: AccentColorId;
   label: string;
   hex: string;
+  inkHex: string;
   glow: string;
   softBg: string;
   gradient: string;
@@ -108,66 +108,56 @@ export const ACCENT_COLORS: AccentOption[] = [
   {
     id: 'auto',
     label: 'Auto',
-    hex: '#00F0FF',
-    glow: '0 0 18px rgba(0, 240, 255, 0.38)',
-    softBg: 'rgba(0, 240, 255, 0.14)',
-    gradient: 'linear-gradient(135deg, rgba(0, 240, 255, 0.28), rgba(255, 46, 147, 0.24))',
+    hex: '#E6DCE8',
+    inkHex: '#22122A',
+    glow: '0 0 16px rgba(230, 220, 232, 0.28)',
+    softBg: 'rgba(230, 220, 232, 0.16)',
+    gradient: 'linear-gradient(135deg, rgba(236, 227, 238, 0.20), rgba(224, 122, 176, 0.18))',
   },
   {
-    id: 'cyan',
-    label: 'Ciano',
-    hex: '#00E5FF',
-    glow: '0 0 18px rgba(0, 229, 255, 0.42)',
-    softBg: 'rgba(0, 229, 255, 0.15)',
-    gradient: 'linear-gradient(135deg, rgba(0, 229, 255, 0.30), rgba(14, 165, 233, 0.16))',
+    id: 'pearl',
+    label: 'Pearl',
+    hex: '#E6DCE8',
+    inkHex: '#22122A',
+    glow: '0 0 16px rgba(230, 220, 232, 0.30)',
+    softBg: 'rgba(230, 220, 232, 0.18)',
+    gradient: 'linear-gradient(135deg, rgba(236, 227, 238, 0.22), rgba(158, 138, 166, 0.18))',
   },
   {
-    id: 'magenta',
-    label: 'Rosa',
-    hex: '#FF2E93',
-    glow: '0 0 18px rgba(255, 46, 147, 0.42)',
-    softBg: 'rgba(255, 46, 147, 0.15)',
-    gradient: 'linear-gradient(135deg, rgba(255, 46, 147, 0.30), rgba(168, 85, 247, 0.18))',
+    id: 'rose',
+    label: 'Rose',
+    hex: '#E07AB0',
+    inkHex: '#22122A',
+    glow: '0 0 16px rgba(224, 122, 176, 0.34)',
+    softBg: 'rgba(224, 122, 176, 0.18)',
+    gradient: 'linear-gradient(135deg, rgba(224, 122, 176, 0.26), rgba(91, 43, 92, 0.32))',
   },
   {
-    id: 'sunset',
-    label: 'Coral',
-    hex: '#FF7A59',
-    glow: '0 0 18px rgba(255, 122, 89, 0.42)',
-    softBg: 'rgba(255, 122, 89, 0.16)',
-    gradient: 'linear-gradient(135deg, rgba(255, 122, 89, 0.32), rgba(255, 46, 147, 0.2))',
+    id: 'blush',
+    label: 'Blush',
+    hex: '#F09AC6',
+    inkHex: '#22122A',
+    glow: '0 0 16px rgba(240, 154, 198, 0.32)',
+    softBg: 'rgba(240, 154, 198, 0.18)',
+    gradient: 'linear-gradient(135deg, rgba(240, 154, 198, 0.24), rgba(176, 107, 163, 0.20))',
   },
   {
-    id: 'gold',
-    label: 'Ouro',
-    hex: '#FFB84D',
-    glow: '0 0 18px rgba(255, 184, 77, 0.4)',
-    softBg: 'rgba(255, 184, 77, 0.16)',
-    gradient: 'linear-gradient(135deg, rgba(255, 184, 77, 0.30), rgba(255, 122, 89, 0.18))',
+    id: 'orchid',
+    label: 'Orchid',
+    hex: '#B06BA3',
+    inkHex: '#F3ECF5',
+    glow: '0 0 16px rgba(176, 107, 163, 0.32)',
+    softBg: 'rgba(176, 107, 163, 0.22)',
+    gradient: 'linear-gradient(135deg, rgba(176, 107, 163, 0.28), rgba(53, 31, 67, 0.36))',
   },
   {
-    id: 'violet',
-    label: 'Violeta',
-    hex: '#A855F7',
-    glow: '0 0 18px rgba(168, 85, 247, 0.42)',
-    softBg: 'rgba(168, 85, 247, 0.16)',
-    gradient: 'linear-gradient(135deg, rgba(168, 85, 247, 0.32), rgba(0, 229, 255, 0.16))',
-  },
-  {
-    id: 'mint',
-    label: 'Menta',
-    hex: '#10F5A8',
-    glow: '0 0 18px rgba(16, 245, 168, 0.4)',
-    softBg: 'rgba(16, 245, 168, 0.15)',
-    gradient: 'linear-gradient(135deg, rgba(16, 245, 168, 0.28), rgba(0, 229, 255, 0.16))',
-  },
-  {
-    id: 'crimson',
-    label: 'Rubi',
-    hex: '#FF3B5C',
-    glow: '0 0 18px rgba(255, 59, 92, 0.45)',
-    softBg: 'rgba(255, 59, 92, 0.16)',
-    gradient: 'linear-gradient(135deg, rgba(255, 59, 92, 0.32), rgba(255, 122, 89, 0.18))',
+    id: 'mauve',
+    label: 'Mauve',
+    hex: '#8F6A9A',
+    inkHex: '#F3ECF5',
+    glow: '0 0 14px rgba(143, 106, 154, 0.28)',
+    softBg: 'rgba(143, 106, 154, 0.22)',
+    gradient: 'linear-gradient(135deg, rgba(143, 106, 154, 0.26), rgba(43, 23, 56, 0.40))',
   },
 ];
 
@@ -184,16 +174,16 @@ export function resolveAccentOption(
   assignedTo: PersonAssignment
 ): AccentOption {
   if (accentColor === 'auto') {
-    return assignedTo === 'marii' ? ACCENT_COLOR_MAP.magenta : ACCENT_COLOR_MAP.cyan;
+    return assignedTo === 'marii' ? ACCENT_COLOR_MAP.rose : ACCENT_COLOR_MAP.pearl;
   }
-  return ACCENT_COLOR_MAP[accentColor] ?? ACCENT_COLOR_MAP.cyan;
+  return ACCENT_COLOR_MAP[accentColor] ?? ACCENT_COLOR_MAP.pearl;
 }
 
 export const CARD_STYLES: { id: CardStyle; label: string; hint: string }[] = [
   { id: 'glass', label: 'Glass', hint: 'Fosco' },
-  { id: 'neon', label: 'Neon', hint: 'Brilho' },
-  { id: 'gradient', label: 'Vice', hint: 'Degradê' },
-  { id: 'solid', label: 'Sólido', hint: 'Forte' },
+  { id: 'neon', label: 'Contorno', hint: 'Borda' },
+  { id: 'gradient', label: 'Plum', hint: 'Degrade' },
+  { id: 'solid', label: 'Solido', hint: 'Menu' },
 ];
 
 export const BAG_LOCATIONS: { id: BagLocation; label: string; Icon: LucideIcon }[] = [
@@ -215,34 +205,34 @@ export const PRIORITY_OPTIONS: {
   label: string;
   color: string;
 }[] = [
-  { id: 'normal', label: 'Normal', color: '#94A3B8' },
-  { id: 'essential', label: 'Essencial', color: '#FFB84D' },
-  { id: 'urgent', label: 'Urgente', color: '#FF3B5C' },
+  { id: 'normal', label: 'Normal', color: '#8E7498' },
+  { id: 'essential', label: 'Essencial', color: '#E6DCE8' },
+  { id: 'urgent', label: 'Urgente', color: '#F09AC6' },
 ];
 
-export const PRESET_TAGS = ['praia', 'noite', 'casamento', 'estrada', 'clima', 'eletronico', 'vip'];
-
-export const QUICK_TASK_SUGGESTIONS: {
-  name: string;
-  categoryId: CategoryId;
-  icon: TaskIconId;
-  bag: BagLocation;
-}[] = [
-  { name: 'Protetor solar', categoryId: 'praia', icon: 'sun', bag: 'mochila' },
-  { name: 'Oculos de sol', categoryId: 'praia', icon: 'glasses', bag: 'mao' },
-  { name: 'Carregador', categoryId: 'praticidade', icon: 'battery-charging', bag: 'mochila' },
-  { name: 'Documentos', categoryId: 'saude_docs', icon: 'credit-card', bag: 'mao' },
-  { name: 'Roupa de banho', categoryId: 'praia', icon: 'waves', bag: 'mala' },
-  { name: 'Perfume', categoryId: 'higiene', icon: 'droplets', bag: 'necessaire' },
-  { name: 'Remedios', categoryId: 'saude_docs', icon: 'pill', bag: 'necessaire' },
-  { name: 'Powerbank', categoryId: 'praticidade', icon: 'smartphone', bag: 'mao' },
-];
+export const PRESET_TAGS = ['praia', 'noite', 'casamento', 'estrada', 'clima', 'tech', 'vip'];
 
 const VALID_ICONS = new Set<string>(TASK_ICONS.map((i) => i.id));
 const VALID_ACCENTS = new Set<string>(ACCENT_COLORS.map((c) => c.id));
 const VALID_STYLES = new Set<string>(CARD_STYLES.map((s) => s.id));
 const VALID_BAGS = new Set<string>(BAG_LOCATIONS.map((b) => b.id));
 const VALID_PRIORITIES = new Set<string>(PRIORITY_OPTIONS.map((p) => p.id));
+
+const LEGACY_ACCENT_MAP: Record<string, AccentColorId> = {
+  cyan: 'pearl',
+  gold: 'pearl',
+  mint: 'pearl',
+  magenta: 'rose',
+  crimson: 'rose',
+  sunset: 'blush',
+  violet: 'orchid',
+};
+
+function sanitizeAccentColor(raw: unknown): AccentColorId {
+  if (typeof raw !== 'string') return 'auto';
+  if (VALID_ACCENTS.has(raw)) return raw as AccentColorId;
+  return LEGACY_ACCENT_MAP[raw] ?? 'auto';
+}
 
 function sanitizeSubtasks(raw: unknown): SubTask[] {
   if (!Array.isArray(raw)) return [];
@@ -292,10 +282,7 @@ export function withTaskDefaults(raw: Record<string, unknown>, idOverride?: stri
     createdAt,
     order,
     icon: typeof raw.icon === 'string' && VALID_ICONS.has(raw.icon) ? (raw.icon as TaskIconId) : 'sparkles',
-    accentColor:
-      typeof raw.accentColor === 'string' && VALID_ACCENTS.has(raw.accentColor)
-        ? (raw.accentColor as AccentColorId)
-        : 'auto',
+    accentColor: sanitizeAccentColor(raw.accentColor),
     cardStyle:
       typeof raw.cardStyle === 'string' && VALID_STYLES.has(raw.cardStyle)
         ? (raw.cardStyle as CardStyle)

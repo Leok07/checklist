@@ -1,5 +1,5 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { GripVertical, Flame, Plus, ArrowLeftRight } from 'lucide-react';
+import { GripVertical, Flame, ArrowLeftRight } from 'lucide-react';
 import {
   ChecklistItem,
   ChecklistStats,
@@ -11,11 +11,16 @@ import { CardDensity, getCardVisualStyles } from './ItemCard';
 import { VirtualTaskList } from './VirtualTaskList';
 import { CardDragPayload } from '../motion/useSwipeAndDragCard';
 import {
-  createSpringChannel,
   setSurgicalWillChange,
   SPRING_BOUNCY,
-  SpringChannel,
 } from '../motion/springEngine';
+import {
+  animateSpringScaleX,
+  animateSpringTransform,
+  animateSpringTranslateX,
+  cancelWaapiSpring,
+  readActiveSpringState,
+} from '../motion/waapiSpring';
 import { triggerHaptic } from '../motion/haptics';
 
 interface SplitStageProps {
@@ -25,7 +30,6 @@ interface SplitStageProps {
   snapMode: SplitSnapMode;
   onSnapModeChange: (mode: SplitSnapMode) => void;
   fabHoverTarget: PersonAssignment | null;
-  onAdd: (person: PersonAssignment) => void;
   onToggle: (id: string, x: number, y: number) => void;
   onCustomize: (item: ChecklistItem) => void;
   onRemove: (id: string) => void;
@@ -37,7 +41,7 @@ interface SplitStageProps {
     targetIndex: number,
     dropX: number,
     dropY: number
-  ) => void;
+  ) => Promise<boolean>;
 }
 
 export function getSplitRatioFromSnap(snapMode: SplitSnapMode): number {
@@ -53,7 +57,6 @@ export const SplitStage: React.FC<SplitStageProps> = ({
   snapMode,
   onSnapModeChange,
   fabHoverTarget,
-  onAdd,
   onToggle,
   onCustomize,
   onRemove,
@@ -65,15 +68,23 @@ export const SplitStage: React.FC<SplitStageProps> = ({
   const dividerBeamRef = useRef<HTMLDivElement | null>(null);
   const leeoColRef = useRef<HTMLDivElement | null>(null);
   const mariiColRef = useRef<HTMLDivElement | null>(null);
+  const leeoBarRef = useRef<HTMLDivElement | null>(null);
+  const mariiBarRef = useRef<HTMLDivElement | null>(null);
   const leeoScrollRef = useRef<HTMLDivElement | null>(null);
   const mariiScrollRef = useRef<HTMLDivElement | null>(null);
   const dragGhostRef = useRef<HTMLDivElement | null>(null);
 
-  const dividerSpringRef = useRef<SpringChannel | null>(null);
+  const prevLeeoRatioRef = useRef(stats.leeo.progressPercent / 100);
+  const prevMariiRatioRef = useRef(stats.marii.progressPercent / 100);
+  const prevSnapRatioRef = useRef(getSplitRatioFromSnap(snapMode));
+
   const dividerStateRef = useRef({
     active: false,
     pointerId: -1,
     startClientX: 0,
+    lastClientX: 0,
+    lastTime: 0,
+    vx: 0,
     offsetX: 0,
     lastTapTime: 0,
     previewSnap: snapMode as SplitSnapMode,
@@ -83,8 +94,8 @@ export const SplitStage: React.FC<SplitStageProps> = ({
 
   const [isDraggingDivider, setIsDraggingDivider] = useState(false);
   const [dividerPreviewSnap, setDividerPreviewSnap] = useState<SplitSnapMode | null>(null);
+  const [justLandedId, setJustLandedId] = useState<string | null>(null);
 
-  // Estado do Drag-and-Drop de Cards (Ghost 120fps via DOM ref)
   const [draggedItem, setDraggedItem] = useState<ChecklistItem | null>(null);
   const [cardHoverTarget, setCardHoverTarget] = useState<{
     person: PersonAssignment;
@@ -109,53 +120,70 @@ export const SplitStage: React.FC<SplitStageProps> = ({
 
   const splitRatio = getSplitRatioFromSnap(snapMode);
 
-  // Mola GPU-first do feixe do divisor central (0 layout reflow durante o arraste!)
+  // Barras de progresso 100% assincronas com fisica de mola WAAPI (scaleX GPU)
   useEffect(() => {
-    const spring = createSpringChannel(
-      0,
+    const next = stats.leeo.progressPercent / 100;
+    const bar = leeoBarRef.current;
+    if (!bar) return;
+    if (Math.abs(prevLeeoRatioRef.current - next) > 0.001) {
+      animateSpringScaleX(bar, prevLeeoRatioRef.current, next, SPRING_BOUNCY);
+      prevLeeoRatioRef.current = next;
+    } else {
+      bar.style.transform = `scaleX(${next.toFixed(4)})`;
+    }
+  }, [stats.leeo.progressPercent]);
+
+  useEffect(() => {
+    const next = stats.marii.progressPercent / 100;
+    const bar = mariiBarRef.current;
+    if (!bar) return;
+    if (Math.abs(prevMariiRatioRef.current - next) > 0.001) {
+      animateSpringScaleX(bar, prevMariiRatioRef.current, next, SPRING_BOUNCY);
+      prevMariiRatioRef.current = next;
+    } else {
+      bar.style.transform = `scaleX(${next.toFixed(4)})`;
+    }
+  }, [stats.marii.progressPercent]);
+
+  // Efeito mola WAAPI no feixe divisor e nas colunas sempre que snapMode muda (toque no nome ou arraste)
+  useEffect(() => {
+    const nextRatio = getSplitRatioFromSnap(snapMode);
+    const prevRatio = prevSnapRatioRef.current;
+    if (Math.abs(nextRatio - prevRatio) < 0.001) return;
+    prevSnapRatioRef.current = nextRatio;
+
+    const stageWidth = stageRef.current?.clientWidth || 390;
+    const deltaPx = (prevRatio - nextRatio) * stageWidth;
+    const leftoverOffset = dividerStateRef.current.offsetX;
+    dividerStateRef.current.offsetX = 0;
+
+    // Continua suavemente da posicao atual do dedo sem salto algum!
+    const fromX = deltaPx + leftoverOffset;
+    const vx = dividerStateRef.current.vx;
+    dividerStateRef.current.vx = 0;
+
+    if (leeoColRef.current && mariiColRef.current) {
+      leeoColRef.current.style.transform = '';
+      leeoColRef.current.style.opacity = '';
+      mariiColRef.current.style.transform = '';
+      mariiColRef.current.style.opacity = '';
+    }
+
+    animateSpringTranslateX(dividerBeamRef.current, fromX, 0, vx * 0.35, SPRING_BOUNCY);
+
+    const focusedEl = snapMode === 'leeo' ? leeoColRef.current : mariiColRef.current;
+    const startScale = snapMode === 'even' ? 0.985 : 0.965;
+    animateSpringTransform(
+      focusedEl,
+      'col-snap',
+      startScale,
+      1,
+      1.6,
       SPRING_BOUNCY,
-      (offsetX) => {
-        dividerStateRef.current.offsetX = offsetX;
-        const beam = dividerBeamRef.current;
-        if (beam) {
-          beam.style.transform =
-            Math.abs(offsetX) < 0.1 ? '' : `translate3d(${offsetX.toFixed(2)}px, 0, 0)`;
-        }
-
-        // Feedback visual 100% GPU nas colunas (escala + opacidade) sem disparar reflow
-        const stageWidth = stageRef.current?.clientWidth || 390;
-        const norm = Math.max(-1, Math.min(1, offsetX / (stageWidth * 0.28)));
-        if (leeoColRef.current && mariiColRef.current) {
-          if (Math.abs(norm) < 0.01) {
-            leeoColRef.current.style.transform = '';
-            leeoColRef.current.style.opacity = '';
-            mariiColRef.current.style.transform = '';
-            mariiColRef.current.style.opacity = '';
-          } else {
-            const leeoScale = 1 + norm * 0.025;
-            const mariiScale = 1 - norm * 0.025;
-            leeoColRef.current.style.transform = `scale3d(${leeoScale.toFixed(4)}, ${leeoScale.toFixed(4)}, 1)`;
-            mariiColRef.current.style.transform = `scale3d(${mariiScale.toFixed(4)}, ${mariiScale.toFixed(4)}, 1)`;
-            leeoColRef.current.style.opacity = norm < 0 ? String(Math.max(0.68, 1 + norm * 0.28)) : '1';
-            mariiColRef.current.style.opacity = norm > 0 ? String(Math.max(0.68, 1 - norm * 0.28)) : '1';
-          }
-        }
-      },
-      () => {
-        setSurgicalWillChange(dividerBeamRef.current, false);
-        setSurgicalWillChange(leeoColRef.current, false);
-        setSurgicalWillChange(mariiColRef.current, false);
-      }
+      (s) => `scale3d(${s.toFixed(4)}, 1, 1)`,
+      ''
     );
-
-    dividerSpringRef.current = spring;
-    return () => {
-      spring.stop();
-      setSurgicalWillChange(dividerBeamRef.current, false);
-      setSurgicalWillChange(leeoColRef.current, false);
-      setSurgicalWillChange(mariiColRef.current, false);
-    };
-  }, []);
+  }, [snapMode]);
 
   const computeSnapFromX = useCallback((clientX: number): SplitSnapMode => {
     const stage = stageRef.current;
@@ -167,6 +195,33 @@ export const SplitStage: React.FC<SplitStageProps> = ({
     return 'even';
   }, []);
 
+  const applyLiveDividerOffset = useCallback((offsetX: number) => {
+    dividerStateRef.current.offsetX = offsetX;
+    const beam = dividerBeamRef.current;
+    if (beam) {
+      beam.style.transform =
+        Math.abs(offsetX) < 0.1 ? '' : `translate3d(${offsetX.toFixed(2)}px, 0, 0)`;
+    }
+
+    const stageWidth = stageRef.current?.clientWidth || 390;
+    const norm = Math.max(-1, Math.min(1, offsetX / (stageWidth * 0.28)));
+    if (leeoColRef.current && mariiColRef.current) {
+      if (Math.abs(norm) < 0.01) {
+        leeoColRef.current.style.transform = '';
+        leeoColRef.current.style.opacity = '';
+        mariiColRef.current.style.transform = '';
+        mariiColRef.current.style.opacity = '';
+      } else {
+        const leeoScale = 1 + norm * 0.024;
+        const mariiScale = 1 - norm * 0.024;
+        leeoColRef.current.style.transform = `scale3d(${leeoScale.toFixed(4)}, ${leeoScale.toFixed(4)}, 1)`;
+        mariiColRef.current.style.transform = `scale3d(${mariiScale.toFixed(4)}, ${mariiScale.toFixed(4)}, 1)`;
+        leeoColRef.current.style.opacity = norm < 0 ? String(Math.max(0.68, 1 + norm * 0.28)) : '1';
+        mariiColRef.current.style.opacity = norm > 0 ? String(Math.max(0.68, 1 - norm * 0.28)) : '1';
+      }
+    }
+  }, []);
+
   const onDividerPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button > 0) return;
@@ -174,19 +229,30 @@ export const SplitStage: React.FC<SplitStageProps> = ({
 
       const now = performance.now();
       const s = dividerStateRef.current;
-      // Toque duplo no divisor centraliza 50/50 imediatamente
       if (now - s.lastTapTime < 280) {
         s.lastTapTime = 0;
         triggerHaptic('snap');
-        onSnapModeChange('even');
-        dividerSpringRef.current?.setTarget(0);
+        if (snapMode === 'even') {
+          animateSpringTranslateX(dividerBeamRef.current, s.offsetX, 0, 0, SPRING_BOUNCY);
+        } else {
+          onSnapModeChange('even');
+        }
         return;
       }
       s.lastTapTime = now;
 
+      const interrupted = readActiveSpringState(dividerBeamRef.current, 'tx');
+      if (interrupted) {
+        s.offsetX = interrupted.value;
+      }
+      cancelWaapiSpring(dividerBeamRef.current);
+
       s.active = true;
       s.pointerId = e.pointerId;
-      s.startClientX = e.clientX;
+      s.startClientX = e.clientX - s.offsetX;
+      s.lastClientX = e.clientX;
+      s.lastTime = now;
+      s.vx = interrupted ? interrupted.velocity : 0;
       s.previewSnap = snapMode;
 
       setIsDraggingDivider(true);
@@ -194,7 +260,6 @@ export const SplitStage: React.FC<SplitStageProps> = ({
       setSurgicalWillChange(dividerBeamRef.current, true, 'transform');
       setSurgicalWillChange(leeoColRef.current, true, 'transform, opacity');
       setSurgicalWillChange(mariiColRef.current, true, 'transform, opacity');
-      dividerSpringRef.current?.stop();
       triggerHaptic('tap');
 
       try {
@@ -210,6 +275,12 @@ export const SplitStage: React.FC<SplitStageProps> = ({
     (e: React.PointerEvent<HTMLDivElement>) => {
       const s = dividerStateRef.current;
       if (!s.active || e.pointerId !== s.pointerId) return;
+
+      const now = performance.now();
+      const dt = Math.max(0.004, (now - s.lastTime) / 1000);
+      s.vx = s.vx * 0.6 + ((e.clientX - s.lastClientX) / dt) * 0.4;
+      s.lastClientX = e.clientX;
+      s.lastTime = now;
 
       const stage = stageRef.current;
       const stageWidth = stage ? stage.clientWidth : 390;
@@ -231,12 +302,12 @@ export const SplitStage: React.FC<SplitStageProps> = ({
         window.requestAnimationFrame(() => {
           dividerStateRef.current.rafPending = false;
           if (dividerStateRef.current.active) {
-            dividerSpringRef.current?.setImmediate(dividerStateRef.current.pendingDx);
+            applyLiveDividerOffset(dividerStateRef.current.pendingDx);
           }
         });
       }
     },
-    [computeSnapFromX, splitRatio]
+    [applyLiveDividerOffset, computeSnapFromX, splitRatio]
   );
 
   const finishDividerDrag = useCallback(
@@ -261,15 +332,28 @@ export const SplitStage: React.FC<SplitStageProps> = ({
       if (!cancelled && chosen !== snapMode) {
         triggerHaptic('snap');
         onSnapModeChange(chosen);
-        dividerSpringRef.current?.setImmediate(0);
       } else {
-        dividerSpringRef.current?.setTarget(0);
+        const fromOffset = s.offsetX;
+        const vx = s.vx;
+        s.offsetX = 0;
+        s.vx = 0;
+
+        if (leeoColRef.current && mariiColRef.current) {
+          leeoColRef.current.style.transform = '';
+          leeoColRef.current.style.opacity = '';
+          mariiColRef.current.style.transform = '';
+          mariiColRef.current.style.opacity = '';
+          setSurgicalWillChange(leeoColRef.current, false);
+          setSurgicalWillChange(mariiColRef.current, false);
+        }
+
+        animateSpringTranslateX(dividerBeamRef.current, fromOffset, 0, vx * 0.35, SPRING_BOUNCY);
       }
     },
     [onSnapModeChange, snapMode]
   );
 
-  // --- DRAG AND DROP DE CARDS (CRUZAR DIVISOR + REORDENAR) ---
+  // --- DRAG AND DROP DE CARDS ---
   const computeDropSlot = useCallback(
     (clientX: number, clientY: number): { person: PersonAssignment; index: number } => {
       const stage = stageRef.current;
@@ -369,7 +453,7 @@ export const SplitStage: React.FC<SplitStageProps> = ({
   );
 
   const handleCardDragEnd = useCallback(
-    (clientX: number, clientY: number) => {
+    async (clientX: number, clientY: number) => {
       const info = cardDragRef.current;
       const item = info.item;
       cardDragRef.current.item = null;
@@ -377,7 +461,13 @@ export const SplitStage: React.FC<SplitStageProps> = ({
       setCardHoverTarget(null);
 
       if (!item) return;
-      onMoveOrReorder(item.id, info.targetPerson, info.targetIndex, clientX, clientY);
+      const moved = await onMoveOrReorder(item.id, info.targetPerson, info.targetIndex, clientX, clientY);
+      if (moved) {
+        setJustLandedId(item.id);
+        window.setTimeout(() => {
+          setJustLandedId((curr) => (curr === item.id ? null : curr));
+        }, 480);
+      }
     },
     [onMoveOrReorder]
   );
@@ -395,23 +485,22 @@ export const SplitStage: React.FC<SplitStageProps> = ({
 
   return (
     <div ref={stageRef} className="relative flex-1 min-h-0 flex overflow-hidden">
-      {/* COLUNA ESQUERDA: LEEO */}
+      {/* COLUNA ESQUERDA: LEEO (Pearl-Lavender) */}
       <div
         ref={leeoColRef}
         className="relative h-full flex flex-col min-w-0"
         style={{ flexBasis: `${splitRatio * 100}%`, flexShrink: 0 }}
       >
-        {/* Highlight de zona de drop (FAB ou Card arrastado) - GPU opacity-only */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-1.5 rounded-2xl border-2 border-[#00F0FF] z-20 transition-opacity duration-150"
+          className="pointer-events-none absolute inset-1.5 rounded-2xl border-2 border-[#ECE3EE] z-20 transition-opacity duration-150"
           style={{
-            opacity: activeDropPerson === 'leeo' ? 0.9 : 0,
-            boxShadow: 'inset 0 0 28px rgba(0, 240, 255, 0.22)',
+            opacity: activeDropPerson === 'leeo' ? 0.85 : 0,
+            boxShadow: 'inset 0 0 24px rgba(236, 227, 238, 0.18)',
           }}
         />
 
-        {/* Cabecalho Limpo: Apenas "Leeo" (sem "Lado") */}
+        {/* Cabecalho Limpo: Apenas "Leeo" (sem botao "+") */}
         <div className="shrink-0 px-2.5 pt-2.5 pb-2 border-b border-[var(--vice-border)]">
           <div className="flex items-center justify-between gap-1">
             <button
@@ -420,80 +509,66 @@ export const SplitStage: React.FC<SplitStageProps> = ({
                 triggerHaptic('snap');
                 onSnapModeChange(snapMode === 'leeo' ? 'even' : 'leeo');
               }}
-              className="flex items-center gap-1.5 min-w-0 text-left active:scale-95 transition-transform"
+              className="flex items-center gap-1.5 min-w-0 text-left active:scale-95"
               title="Toque para expandir ou centralizar Leeo"
             >
               <h2
                 className="font-display font-black tracking-tight leading-none truncate"
                 style={{
                   fontSize: leeoDensity === 'rail' ? '15px' : '20px',
-                  color: 'var(--vice-leeo)',
+                  color: '#E6DCE8',
                 }}
               >
                 Leeo
               </h2>
               {leeoDensity !== 'rail' && (
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-[var(--vice-leeo-soft)] text-[var(--vice-leeo)] shrink-0">
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-[#E6DCE8]/15 text-[#E6DCE8] shrink-0">
                   {stats.leeo.completed}/{stats.leeo.total}
                 </span>
               )}
               {leeoDensity !== 'rail' && stats.leeo.urgentPending > 0 && (
                 <span
                   title={`${stats.leeo.urgentPending} urgente(s)`}
-                  className="inline-flex items-center text-[#FF3B5C] shrink-0"
+                  className="inline-flex items-center text-[#F09AC6] shrink-0"
                 >
                   <Flame className="w-3 h-3" />
                 </span>
               )}
             </button>
-
-            {leeoDensity !== 'rail' && (
-              <button
-                type="button"
-                onClick={() => {
-                  triggerHaptic('tap');
-                  onAdd('leeo');
-                }}
-                aria-label="Adicionar tarefa para Leeo"
-                className="w-7 h-7 rounded-lg flex items-center justify-center bg-[var(--vice-leeo-soft)] text-[var(--vice-leeo)] active:scale-90 transition-transform shrink-0"
-              >
-                <Plus className="w-4 h-4 stroke-[2.75]" />
-              </button>
-            )}
           </div>
 
-          {/* Barra de progresso GPU-only (scaleX) */}
+          {/* Barra de progresso GPU-only com mola WAAPI */}
           <div className="mt-2 flex items-center gap-1.5">
-            <div className="flex-1 h-1.5 rounded-full bg-[var(--vice-surface-subtle)] overflow-hidden">
+            <div className="flex-1 h-1.5 rounded-full bg-[#6A416C] overflow-hidden">
               <div
-                className="h-full w-full rounded-full origin-left transition-transform duration-300"
+                ref={leeoBarRef}
+                className="h-full w-full rounded-full origin-left"
                 style={{
-                  background: 'linear-gradient(90deg, #00F0FF, #38BDF8)',
-                  transform: `scaleX(${stats.leeo.progressPercent / 100})`,
+                  background: 'var(--vice-leeo-bar)',
+                  transform: `scaleX(${(stats.leeo.progressPercent / 100).toFixed(4)})`,
                 }}
               />
             </div>
             {leeoDensity !== 'rail' && (
-              <span className="text-[10px] font-black tabular-nums text-[var(--vice-leeo)] shrink-0">
+              <span className="text-[10px] font-black tabular-nums text-[#E6DCE8] shrink-0">
                 {stats.leeo.progressPercent}%
               </span>
             )}
           </div>
         </div>
 
-        {/* Lista Virtualizada do Leeo */}
         <VirtualTaskList
           person="leeo"
           items={leeoItems}
           density={leeoDensity}
           draggedItemId={draggedItem?.id ?? null}
+          justLandedId={justLandedId}
           dropInsertIndex={
             draggedItem && cardHoverTarget?.person === 'leeo' ? cardHoverTarget.index : null
           }
           scrollContainerRef={(el) => {
             leeoScrollRef.current = el;
           }}
-          onAdd={onAdd}
           onToggle={onToggle}
           onCustomize={onCustomize}
           onRemove={onRemove}
@@ -505,7 +580,7 @@ export const SplitStage: React.FC<SplitStageProps> = ({
         />
       </div>
 
-      {/* DIVISOR CENTRAL NEON ARRASTAVEL (GPU translate3d durante arraste) */}
+      {/* DIVISOR CENTRAL ARRASTAVEL COM MOLA ASSINCRONA */}
       <div
         ref={dividerBeamRef}
         onPointerDown={onDividerPointerDown}
@@ -518,34 +593,31 @@ export const SplitStage: React.FC<SplitStageProps> = ({
         className="absolute top-0 bottom-0 z-30 w-6 -ml-3 flex items-center justify-center touch-none select-none cursor-col-resize"
         style={{ left: `${splitRatio * 100}%` }}
       >
-        {/* Feixe luminoso vertical */}
         <div
-          className="h-full transition-transform duration-150"
+          className="h-full"
           style={{
             width: isDraggingDivider || isCrossTransfer ? '3px' : '2px',
             background: 'var(--vice-divider)',
             boxShadow:
               isDraggingDivider || isCrossTransfer
-                ? '0 0 18px rgba(255, 46, 147, 0.85), 0 0 12px rgba(0, 240, 255, 0.85)'
-                : '0 0 8px rgba(168, 85, 247, 0.35)',
+                ? '0 0 16px rgba(224, 122, 176, 0.75)'
+                : 'none',
           }}
         />
 
-        {/* Pegador tatil central */}
         <div
           className="absolute top-1/2 -translate-y-1/2 w-5 h-11 rounded-full border border-[var(--vice-border-strong)] bg-[var(--vice-surface-strong)] flex items-center justify-center shadow-lg"
           style={{
             boxShadow: isDraggingDivider
-              ? '0 0 16px rgba(0, 240, 255, 0.65), 0 0 16px rgba(255, 46, 147, 0.65)'
-              : '0 4px 12px rgba(0, 0, 0, 0.35)',
+              ? '0 0 16px rgba(224, 122, 176, 0.65)'
+              : '0 4px 12px rgba(15, 6, 22, 0.45)',
           }}
         >
-          <GripVertical className="w-3 h-3 text-[var(--vice-text-secondary)]" />
+          <GripVertical className="w-3 h-3 text-[#C7B4CE]" />
         </div>
 
-        {/* Etiqueta flutuante de snap enquanto arrasta o divisor */}
         {isDraggingDivider && dividerPreviewSnap && (
-          <div className="absolute top-12 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-[#080412]/90 text-white border border-white/25 whitespace-nowrap shadow-xl pointer-events-none">
+          <div className="absolute top-12 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-[#2B1738] text-[#F3ECF5] border border-[var(--vice-border-strong)] whitespace-nowrap shadow-xl pointer-events-none">
             {dividerPreviewSnap === 'leeo'
               ? 'Foco Leeo'
               : dividerPreviewSnap === 'marii'
@@ -554,32 +626,30 @@ export const SplitStage: React.FC<SplitStageProps> = ({
           </div>
         )}
 
-        {/* Portal indicador ao cruzar card entre Leeo e Marii */}
         {isCrossTransfer && cardHoverTarget && (
-          <div className="absolute top-14 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-gradient-to-r from-[#00E5FF] to-[#FF2E93] text-[#080412] flex items-center gap-1 whitespace-nowrap shadow-xl pointer-events-none">
+          <div className="absolute top-14 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider pearl-highlight-bar flex items-center gap-1 whitespace-nowrap shadow-xl pointer-events-none">
             <ArrowLeftRight className="w-3 h-3" />
             <span>{cardHoverTarget.person === 'leeo' ? 'Leeo' : 'Marii'}</span>
           </div>
         )}
       </div>
 
-      {/* COLUNA DIREITA: MARII */}
+      {/* COLUNA DIREITA: MARII (Rose-Pink) */}
       <div
         ref={mariiColRef}
         className="relative h-full flex flex-col min-w-0"
         style={{ flexBasis: `${(1 - splitRatio) * 100}%`, flexShrink: 0 }}
       >
-        {/* Highlight de zona de drop (FAB ou Card arrastado) - GPU opacity-only */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-1.5 rounded-2xl border-2 border-[#FF2E93] z-20 transition-opacity duration-150"
+          className="pointer-events-none absolute inset-1.5 rounded-2xl border-2 border-[#E07AB0] z-20 transition-opacity duration-150"
           style={{
-            opacity: activeDropPerson === 'marii' ? 0.9 : 0,
-            boxShadow: 'inset 0 0 28px rgba(255, 46, 147, 0.24)',
+            opacity: activeDropPerson === 'marii' ? 0.85 : 0,
+            boxShadow: 'inset 0 0 24px rgba(224, 122, 176, 0.22)',
           }}
         />
 
-        {/* Cabecalho Limpo: Apenas "Marii" (sem "Lado") */}
+        {/* Cabecalho Limpo: Apenas "Marii" (sem botao "+") */}
         <div className="shrink-0 px-2.5 pt-2.5 pb-2 border-b border-[var(--vice-border)]">
           <div className="flex items-center justify-between gap-1">
             <button
@@ -588,80 +658,66 @@ export const SplitStage: React.FC<SplitStageProps> = ({
                 triggerHaptic('snap');
                 onSnapModeChange(snapMode === 'marii' ? 'even' : 'marii');
               }}
-              className="flex items-center gap-1.5 min-w-0 text-left active:scale-95 transition-transform"
+              className="flex items-center gap-1.5 min-w-0 text-left active:scale-95"
               title="Toque para expandir ou centralizar Marii"
             >
               <h2
                 className="font-display font-black tracking-tight leading-none truncate"
                 style={{
                   fontSize: mariiDensity === 'rail' ? '15px' : '20px',
-                  color: 'var(--vice-marii)',
+                  color: '#E07AB0',
                 }}
               >
                 Marii
               </h2>
               {mariiDensity !== 'rail' && (
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-[var(--vice-marii-soft)] text-[var(--vice-marii)] shrink-0">
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-[#E07AB0]/18 text-[#F09AC6] shrink-0">
                   {stats.marii.completed}/{stats.marii.total}
                 </span>
               )}
               {mariiDensity !== 'rail' && stats.marii.urgentPending > 0 && (
                 <span
                   title={`${stats.marii.urgentPending} urgente(s)`}
-                  className="inline-flex items-center text-[#FF3B5C] shrink-0"
+                  className="inline-flex items-center text-[#F09AC6] shrink-0"
                 >
                   <Flame className="w-3 h-3" />
                 </span>
               )}
             </button>
-
-            {mariiDensity !== 'rail' && (
-              <button
-                type="button"
-                onClick={() => {
-                  triggerHaptic('tap');
-                  onAdd('marii');
-                }}
-                aria-label="Adicionar tarefa para Marii"
-                className="w-7 h-7 rounded-lg flex items-center justify-center bg-[var(--vice-marii-soft)] text-[var(--vice-marii)] active:scale-90 transition-transform shrink-0"
-              >
-                <Plus className="w-4 h-4 stroke-[2.75]" />
-              </button>
-            )}
           </div>
 
-          {/* Barra de progresso GPU-only (scaleX) */}
+          {/* Barra de progresso GPU-only com mola WAAPI */}
           <div className="mt-2 flex items-center gap-1.5">
-            <div className="flex-1 h-1.5 rounded-full bg-[var(--vice-surface-subtle)] overflow-hidden">
+            <div className="flex-1 h-1.5 rounded-full bg-[#6A416C] overflow-hidden">
               <div
-                className="h-full w-full rounded-full origin-left transition-transform duration-300"
+                ref={mariiBarRef}
+                className="h-full w-full rounded-full origin-left"
                 style={{
-                  background: 'linear-gradient(90deg, #FF2E93, #FFB84D)',
-                  transform: `scaleX(${stats.marii.progressPercent / 100})`,
+                  background: 'var(--vice-marii-bar)',
+                  transform: `scaleX(${(stats.marii.progressPercent / 100).toFixed(4)})`,
                 }}
               />
             </div>
             {mariiDensity !== 'rail' && (
-              <span className="text-[10px] font-black tabular-nums text-[var(--vice-marii)] shrink-0">
+              <span className="text-[10px] font-black tabular-nums text-[#F09AC6] shrink-0">
                 {stats.marii.progressPercent}%
               </span>
             )}
           </div>
         </div>
 
-        {/* Lista Virtualizada da Marii */}
         <VirtualTaskList
           person="marii"
           items={mariiItems}
           density={mariiDensity}
           draggedItemId={draggedItem?.id ?? null}
+          justLandedId={justLandedId}
           dropInsertIndex={
             draggedItem && cardHoverTarget?.person === 'marii' ? cardHoverTarget.index : null
           }
           scrollContainerRef={(el) => {
             mariiScrollRef.current = el;
           }}
-          onAdd={onAdd}
           onToggle={onToggle}
           onCustomize={onCustomize}
           onRemove={onRemove}
@@ -690,7 +746,7 @@ export const SplitStage: React.FC<SplitStageProps> = ({
               width: `${cardDragRef.current.width}px`,
               background,
               borderColor: accent.hex || borderColor,
-              boxShadow: `0 18px 40px rgba(0, 0, 0, 0.45), ${accent.glow}`,
+              boxShadow: `0 18px 40px rgba(15, 6, 22, 0.55), ${accent.glow}`,
               willChange: 'transform',
             }}
           >
@@ -701,7 +757,7 @@ export const SplitStage: React.FC<SplitStageProps> = ({
               >
                 <GhostIcon className="w-4 h-4" />
               </div>
-              <span className="text-xs font-bold text-[var(--vice-text-primary)] truncate">
+              <span className="text-xs font-bold text-[#F3ECF5] truncate">
                 {draggedItem.name}
               </span>
             </div>

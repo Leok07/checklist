@@ -15,21 +15,21 @@ export const SPRING_SNAPPY: SpringConfig = {
 export const SPRING_BOUNCY: SpringConfig = {
   mass: 1,
   stiffness: 320,
-  damping: 22,
+  damping: 20,
   precision: 0.05,
 };
 
 export const SPRING_SHEET: SpringConfig = {
   mass: 1,
-  stiffness: 360,
-  damping: 34,
+  stiffness: 340,
+  damping: 28,
   precision: 0.05,
 };
 
 export const SPRING_GENTLE: SpringConfig = {
-  mass: 1.15,
-  stiffness: 230,
-  damping: 26,
+  mass: 1.1,
+  stiffness: 240,
+  damping: 24,
   precision: 0.05,
 };
 
@@ -55,17 +55,32 @@ let lastFrameTime = 0;
 
 // Passo fixo de 4ms para estabilidade numerica em 60Hz, 90Hz e 120Hz (ProMotion)
 const FIXED_STEP = 0.004;
-const MAX_FRAME_DT = 0.048;
+// Dilatacao temporal deterministica: limita o avanco maximo por frame a 16.67ms.
+// Se o sistema cair de FPS sob carga, a animacao acompanha em camera lenta suave
+// em vez de pular frames ou finalizar instantaneamente.
+const MAX_SIM_STEP = 1 / 60;
+let adaptiveTimeScale = 1;
 
 function tickAllSprings(now: number) {
   if (lastFrameTime === 0) {
     lastFrameTime = now;
   }
 
-  let frameDt = (now - lastFrameTime) / 1000;
+  let rawDt = (now - lastFrameTime) / 1000;
   lastFrameTime = now;
-  if (frameDt > MAX_FRAME_DT) frameDt = MAX_FRAME_DT;
-  if (frameDt <= 0) frameDt = 0.008;
+  if (rawDt <= 0) rawDt = 0.008;
+
+  if (rawDt > 0.024) {
+    // Sistema sob carga: reduz gradualmente a escala temporal para camera lenta fluida
+    const pressure = Math.min(1, (rawDt - 0.024) / 0.08);
+    const targetScale = 1 - pressure * 0.55;
+    adaptiveTimeScale = adaptiveTimeScale * 0.7 + targetScale * 0.3;
+  } else {
+    // Recupera suavemente para 1.0x quando a taxa de quadros normaliza
+    adaptiveTimeScale = adaptiveTimeScale * 0.85 + 0.15;
+  }
+
+  const simDt = Math.min(MAX_SIM_STEP, rawDt * adaptiveTimeScale);
 
   // Iteracao in-place sem alocar novos arrays ou closures
   activeSprings.forEach((spring) => {
@@ -76,7 +91,7 @@ function tickAllSprings(now: number) {
     let v = spring.velocity;
     const target = spring.target;
 
-    let remaining = frameDt;
+    let remaining = simDt;
     while (remaining > 0) {
       const dt = remaining > FIXED_STEP ? FIXED_STEP : remaining;
       const force = -stiffness * (x - target) - damping * v;
@@ -108,6 +123,7 @@ function tickAllSprings(now: number) {
   } else {
     rafId = null;
     lastFrameTime = 0;
+    adaptiveTimeScale = 1;
   }
 }
 

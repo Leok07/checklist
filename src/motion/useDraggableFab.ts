@@ -7,46 +7,47 @@ import {
   SPRING_SNAPPY,
   SpringChannel,
 } from './springEngine';
+import {
+  animateSpringTransform,
+  animateSpringWiggleX,
+  cancelWaapiSpring,
+} from './waapiSpring';
 import { triggerHaptic } from './haptics';
 
 interface UseDraggableFabOptions {
   containerRef: React.RefObject<HTMLDivElement>;
   splitRatio: number;
-  onTap: () => void;
+  onTapHint: () => void;
   onDropOnPerson: (person: PersonAssignment, x: number, y: number) => void;
   onHoverTargetChange: (target: PersonAssignment | null) => void;
 }
 
-const FAB_SIZE = 58;
-const EDGE_MARGIN = 14;
-const BOTTOM_DOCK_OFFSET = 22;
+const FAB_SIZE = 56;
+const BOTTOM_DOCK_OFFSET = 18;
+const HORIZONTAL_DRAG_THRESHOLD = 42;
 
 /**
- * Controla o botao "+" flutuante magnetico (120fps GPU translate3d):
- * - Toque curto: abre Nova Task
- * - Arrastar sobre a coluna do Leeo ou Marii e soltar: abre Nova Task ja direcionada
- * - Arrastar para qualquer borda: encaixe magnetico com fisica de mola + inercia
+ * Controla o botao "+" inferior unico ativado EXCLUSIVAMENTE por arraste:
+ * - Toque simples sem arrastar: NAO abre a gaveta; dispara wiggle elastico com mola + aviso visual
+ * - Arrastar para esquerda (Leeo) ou direita (Marii): ilumina a coluna alvo e abre a gaveta ao soltar
+ * - Ao soltar: retorna ao centro com mola assincrona WAAPI herdando a velocidade do gesto
  */
 export function useDraggableFab({
   containerRef,
   splitRatio,
-  onTap,
+  onTapHint,
   onDropOnPerson,
   onHoverTargetChange,
 }: UseDraggableFabOptions) {
   const fabRef = useRef<HTMLButtonElement | null>(null);
-  const springXRef = useRef<SpringChannel | null>(null);
-  const springYRef = useRef<SpringChannel | null>(null);
   const springScaleRef = useRef<SpringChannel | null>(null);
 
-  const posRef = useRef({ x: 0, y: 0, scale: 1, initialized: false, dockedBottom: true });
+  const posRef = useRef({ dx: 0, dy: 0, scale: 1 });
   const dragRef = useRef({
     active: false,
     pointerId: -1,
     startClientX: 0,
     startClientY: 0,
-    startPosX: 0,
-    startPosY: 0,
     lastClientX: 0,
     lastClientY: 0,
     lastTime: 0,
@@ -55,121 +56,51 @@ export function useDraggableFab({
     moved: false,
     hoverTarget: null as PersonAssignment | null,
     rafPending: false,
-    pendingX: 0,
-    pendingY: 0,
+    pendingDx: 0,
+    pendingDy: 0,
   });
 
-  const latestRef = useRef({ splitRatio, onTap, onDropOnPerson, onHoverTargetChange });
-  latestRef.current = { splitRatio, onTap, onDropOnPerson, onHoverTargetChange };
+  const latestRef = useRef({ splitRatio, onTapHint, onDropOnPerson, onHoverTargetChange });
+  latestRef.current = { splitRatio, onTapHint, onDropOnPerson, onHoverTargetChange };
 
   const applyTransform = useCallback(() => {
     const el = fabRef.current;
     if (!el) return;
-    const { x, y, scale } = posRef.current;
-    el.style.transform = `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0) scale3d(${scale.toFixed(4)}, ${scale.toFixed(4)}, 1)`;
+    const { dx, dy, scale } = posRef.current;
+    if (Math.abs(dx) < 0.05 && Math.abs(dy) < 0.05 && Math.abs(scale - 1) < 0.002) {
+      el.style.transform = '';
+      return;
+    }
+    el.style.transform = `translate3d(${dx.toFixed(2)}px, ${dy.toFixed(2)}px, 0) scale3d(${scale.toFixed(4)}, ${scale.toFixed(4)}, 1)`;
   }, []);
 
-  const getBounds = useCallback(() => {
-    const container = containerRef.current;
-    const width = container ? container.clientWidth : window.innerWidth;
-    const height = container ? container.clientHeight : window.innerHeight;
-    return {
-      width,
-      height,
-      minX: EDGE_MARGIN,
-      maxX: Math.max(EDGE_MARGIN, width - FAB_SIZE - EDGE_MARGIN),
-      minY: 76,
-      maxY: Math.max(76, height - FAB_SIZE - BOTTOM_DOCK_OFFSET),
-    };
-  }, [containerRef]);
-
-  const computeDefaultDock = useCallback(() => {
-    const b = getBounds();
-    return {
-      x: (b.width - FAB_SIZE) / 2,
-      y: b.maxY,
-    };
-  }, [getBounds]);
-
   useEffect(() => {
-    const initial = computeDefaultDock();
-    posRef.current.x = initial.x;
-    posRef.current.y = initial.y;
-    posRef.current.initialized = true;
-
-    const sx = createSpringChannel(
-      initial.x,
-      SPRING_BOUNCY,
+    const ss = createSpringChannel(
+      1,
+      SPRING_SNAPPY,
       (val) => {
-        posRef.current.x = val;
+        posRef.current.scale = val;
         applyTransform();
       },
       () => {
-        if (!dragRef.current.active && !springYRef.current?.active && !springScaleRef.current?.active) {
+        if (!dragRef.current.active) {
           setSurgicalWillChange(fabRef.current, false);
         }
       }
     );
 
-    const sy = createSpringChannel(
-      initial.y,
-      SPRING_BOUNCY,
-      (val) => {
-        posRef.current.y = val;
-        applyTransform();
-      },
-      () => {
-        if (!dragRef.current.active && !springXRef.current?.active && !springScaleRef.current?.active) {
-          setSurgicalWillChange(fabRef.current, false);
-        }
-      }
-    );
-
-    const ss = createSpringChannel(1, SPRING_SNAPPY, (val) => {
-      posRef.current.scale = val;
-      applyTransform();
-    });
-
-    springXRef.current = sx;
-    springYRef.current = sy;
     springScaleRef.current = ss;
-    applyTransform();
-
-    const handleResize = () => {
-      const b = getBounds();
-      if (posRef.current.dockedBottom) {
-        sx.setImmediate((b.width - FAB_SIZE) / 2);
-        sy.setImmediate(b.maxY);
-        return;
-      }
-      const clampedX = Math.min(b.maxX, Math.max(b.minX, posRef.current.x));
-      const clampedY = Math.min(b.maxY, Math.max(b.minY, posRef.current.y));
-      sx.setImmediate(clampedX);
-      sy.setImmediate(clampedY);
-    };
-
-    const container = containerRef.current;
-    let observer: ResizeObserver | null = null;
-    if (container && typeof ResizeObserver !== 'undefined') {
-      observer = new ResizeObserver(handleResize);
-      observer.observe(container);
-    }
-    window.addEventListener('resize', handleResize);
-
     return () => {
-      observer?.disconnect();
-      window.removeEventListener('resize', handleResize);
-      sx.stop();
-      sy.stop();
       ss.stop();
+      cancelWaapiSpring(fabRef.current);
       setSurgicalWillChange(fabRef.current, false);
     };
-  }, [applyTransform, computeDefaultDock, containerRef, getBounds]);
+  }, [applyTransform]);
 
   const setHoverTarget = (next: PersonAssignment | null) => {
     if (dragRef.current.hoverTarget !== next) {
       dragRef.current.hoverTarget = next;
-      if (next !== null) triggerHaptic('tap');
+      if (next !== null) triggerHaptic('snap');
       latestRef.current.onHoverTargetChange(next);
     }
   };
@@ -178,23 +109,22 @@ export function useDraggableFab({
     if (e.button > 0) return;
     e.stopPropagation();
 
+    cancelWaapiSpring(fabRef.current);
     const d = dragRef.current;
     d.active = true;
     d.pointerId = e.pointerId;
     d.startClientX = e.clientX;
     d.startClientY = e.clientY;
-    d.startPosX = posRef.current.x;
-    d.startPosY = posRef.current.y;
     d.lastClientX = e.clientX;
     d.lastClientY = e.clientY;
     d.lastTime = performance.now();
     d.vx = 0;
     d.vy = 0;
     d.moved = false;
+    posRef.current.dx = 0;
+    posRef.current.dy = 0;
 
     setSurgicalWillChange(fabRef.current, true, 'transform');
-    springXRef.current?.stop();
-    springYRef.current?.stop();
     springScaleRef.current?.setTarget(0.92);
     triggerHaptic('tap');
 
@@ -218,26 +148,36 @@ export function useDraggableFab({
       d.lastClientY = e.clientY;
       d.lastTime = now;
 
-      const dx = e.clientX - d.startClientX;
-      const dy = e.clientY - d.startClientY;
-      if (!d.moved && (Math.abs(dx) > 7 || Math.abs(dy) > 7)) {
+      const rawDx = e.clientX - d.startClientX;
+      const rawDy = e.clientY - d.startClientY;
+
+      if (!d.moved && (Math.abs(rawDx) > 7 || Math.abs(rawDy) > 7)) {
         d.moved = true;
-        springScaleRef.current?.setTarget(1.1);
+        springScaleRef.current?.setTarget(1.08);
       }
 
       if (!d.moved) return;
 
-      const b = getBounds();
-      d.pendingX = Math.min(b.maxX, Math.max(b.minX, d.startPosX + dx));
-      d.pendingY = Math.min(b.maxY, Math.max(b.minY, d.startPosY + dy));
+      const container = containerRef.current;
+      const width = container ? container.clientWidth : window.innerWidth;
+      const maxLateral = Math.max(88, width * 0.5 - FAB_SIZE * 0.65);
 
-      // Detecta se a bolha esta sobre a area de tarefas do Leeo ou da Marii
-      const centerX = d.pendingX + FAB_SIZE / 2;
-      const centerY = d.pendingY + FAB_SIZE / 2;
-      const inDropZone = centerY < b.height - 115 && centerY > 110;
-      if (inDropZone) {
-        const dividerX = b.width * latestRef.current.splitRatio;
-        setHoverTarget(centerX < dividerX ? 'leeo' : 'marii');
+      // Movimento livre lateral + resistencia elastica suave vertical
+      const clampedDx = Math.max(-maxLateral, Math.min(maxLateral, rawDx));
+      const clampedDy = Math.max(-220, Math.min(18, rawDy * 0.45));
+
+      d.pendingDx = clampedDx;
+      d.pendingDy = clampedDy;
+
+      // Detecta coluna alvo (esquerda = Leeo, direita = Marii)
+      if (clampedDx <= -HORIZONTAL_DRAG_THRESHOLD) {
+        setHoverTarget('leeo');
+      } else if (clampedDx >= HORIZONTAL_DRAG_THRESHOLD) {
+        setHoverTarget('marii');
+      } else if (rawDy < -72 && container) {
+        const rect = container.getBoundingClientRect();
+        const dividerX = rect.left + rect.width * latestRef.current.splitRatio;
+        setHoverTarget(e.clientX < dividerX ? 'leeo' : 'marii');
       } else {
         setHoverTarget(null);
       }
@@ -247,13 +187,14 @@ export function useDraggableFab({
         window.requestAnimationFrame(() => {
           dragRef.current.rafPending = false;
           if (dragRef.current.active) {
-            springXRef.current?.setImmediate(dragRef.current.pendingX, dragRef.current.vx);
-            springYRef.current?.setImmediate(dragRef.current.pendingY, dragRef.current.vy);
+            posRef.current.dx = dragRef.current.pendingDx;
+            posRef.current.dy = dragRef.current.pendingDy;
+            applyTransform();
           }
         });
       }
     },
-    [getBounds]
+    [applyTransform, containerRef]
   );
 
   const finishDrag = useCallback(
@@ -272,49 +213,51 @@ export function useDraggableFab({
       }
 
       const activeTarget = d.hoverTarget;
-      setHoverTarget(null);
-      springScaleRef.current?.setTarget(1);
+      const fromDx = posRef.current.dx;
+      const fromDy = posRef.current.dy;
+      posRef.current.dx = 0;
+      posRef.current.dy = 0;
+      posRef.current.scale = 1;
+      springScaleRef.current?.stop();
 
+      setHoverTarget(null);
+
+      // TOQUE SIMPLES: nao abre gaveta; faz wiggle elastico com mola + orienta usuario
       if (!d.moved && !cancelled) {
-        latestRef.current.onTap();
+        triggerHaptic('tap');
+        animateSpringWiggleX(fabRef.current);
+        latestRef.current.onTapHint();
         return;
       }
 
-      const b = getBounds();
+      // Retorno ao centro por mola assincrona WAAPI herdando velocidade em X e Y
+      const distance = Math.hypot(fromDx, fromDy);
+      if (distance > 1) {
+        const startRatio = 1;
+        const unitX = fromDx / distance;
+        const unitY = fromDy / distance;
+        const projVel = d.vx * unitX + d.vy * unitY;
+        animateSpringTransform(
+          fabRef.current,
+          'fab-return',
+          startRatio,
+          0,
+          projVel / Math.max(1, distance),
+          SPRING_BOUNCY,
+          (t) =>
+            `translate3d(${(fromDx * t).toFixed(2)}px, ${(fromDy * t).toFixed(2)}px, 0)`,
+          ''
+        );
+      } else if (fabRef.current) {
+        fabRef.current.style.transform = '';
+      }
 
-      // Se soltou sobre uma coluna ativa, abre criacao direta para aquela pessoa e retorna ao dock
       if (activeTarget && !cancelled) {
         triggerHaptic('snap');
         latestRef.current.onDropOnPerson(activeTarget, e.clientX, e.clientY);
-        const dock = computeDefaultDock();
-        posRef.current.dockedBottom = true;
-        springXRef.current?.setTarget(dock.x, d.vx * 0.25);
-        springYRef.current?.setTarget(dock.y, d.vy * 0.25);
-        return;
       }
-
-      // Encaixe magnetico na borda mais proxima com projecao de inercia
-      const projectedX = posRef.current.x + d.vx * 0.12;
-      const projectedY = posRef.current.y + d.vy * 0.12;
-      const clampedY = Math.min(b.maxY, Math.max(b.minY + 30, projectedY));
-
-      let snapX: number;
-      const nearBottom = clampedY >= b.maxY - 36;
-      const centerX = (b.width - FAB_SIZE) / 2;
-
-      if (nearBottom && Math.abs(projectedX - centerX) < b.width * 0.22) {
-        snapX = centerX;
-        posRef.current.dockedBottom = true;
-      } else {
-        snapX = projectedX + FAB_SIZE / 2 < b.width / 2 ? b.minX : b.maxX;
-        posRef.current.dockedBottom = false;
-      }
-
-      triggerHaptic('snap');
-      springXRef.current?.setTarget(snapX, d.vx * 0.35);
-      springYRef.current?.setTarget(clampedY, d.vy * 0.35);
     },
-    [computeDefaultDock, getBounds]
+    []
   );
 
   const onPointerUp = useCallback(
@@ -329,6 +272,7 @@ export function useDraggableFab({
 
   return {
     fabRef,
+    bottomOffset: BOTTOM_DOCK_OFFSET,
     fabHandlers: {
       onPointerDown,
       onPointerMove,

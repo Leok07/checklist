@@ -1,7 +1,6 @@
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Search, X, Flame } from 'lucide-react';
 import { useChecklist } from './hooks/useChecklist';
-import { useViceTheme } from './hooks/useViceTheme';
 import { useTaskProcessor } from './workers/useTaskProcessor';
 import {
   BagLocation,
@@ -21,6 +20,8 @@ import { ViceFab } from './components/ViceFab';
 import { TaskStudioSheet } from './components/TaskStudioSheet';
 import { Toast } from './components/Toast';
 import { NeonBurstCanvas, NeonBurstHandle } from './motion/NeonBurstCanvas';
+import { SPRING_BOUNCY } from './motion/springEngine';
+import { animateSpringOpacity, animateSpringTranslateY } from './motion/waapiSpring';
 import { triggerHaptic } from './motion/haptics';
 
 interface ToastState {
@@ -48,13 +49,10 @@ export function App() {
     cloudError,
   } = useChecklist();
 
-  const { atmosphere, preference, cycleAtmosphere } = useViceTheme();
-
-  // Shell mobile-only ref (usado pelo FAB magnetico e Canvas de particulas)
   const shellRef = useRef<HTMLDivElement | null>(null);
   const burstRef = useRef<NeonBurstHandle | null>(null);
+  const searchBarRef = useRef<HTMLDivElement | null>(null);
 
-  // Estados de interface
   const [snapMode, setSnapMode] = useState<SplitSnapMode>('even');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -67,6 +65,7 @@ export function App() {
   const [editingItem, setEditingItem] = useState<ChecklistItem | null>(null);
   const [studioInitialPerson, setStudioInitialPerson] = useState<PersonAssignment>('leeo');
   const [fabHoverTarget, setFabHoverTarget] = useState<PersonAssignment | null>(null);
+  const [hintPulse, setHintPulse] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
 
   const filterCriteria = useMemo(
@@ -80,10 +79,14 @@ export function App() {
     [searchQuery, statusFilter, categoryFilter, priorityFilter, bagFilter]
   );
 
-  const { leeoItems, mariiItems, stats, generateExportAsync } = useTaskProcessor(
-    items,
-    filterCriteria
-  );
+  const { leeoItems, mariiItems, stats, generateExportAsync, deduceTaskAsync } =
+    useTaskProcessor(items, filterCriteria);
+
+  useEffect(() => {
+    if (!isSearchOpen) return;
+    animateSpringTranslateY(searchBarRef.current, -14, 0, 0, SPRING_BOUNCY);
+    animateSpringOpacity(searchBarRef.current, 0, 1, 180);
+  }, [isSearchOpen]);
 
   const hasActiveFilters = Boolean(
     searchQuery.trim() ||
@@ -152,7 +155,7 @@ export function App() {
       const becameCompleted = await toggleItem(id);
       if (becameCompleted && target) {
         const accent = resolveAccentOption(target.accentColor, target.assignedTo);
-        burstRef.current?.burst(clientX, clientY, accent.hex, '#FFB84D');
+        burstRef.current?.burst(clientX, clientY, accent.hex, '#E6DCE8');
       }
     },
     [items, toggleItem]
@@ -178,7 +181,7 @@ export function App() {
       targetIndex: number,
       dropX: number,
       dropY: number
-    ) => {
+    ): Promise<boolean> => {
       const current = items.find((i) => i.id === id);
       const moved = await moveOrReorderItem(id, targetPerson, targetIndex);
       if (moved && current) {
@@ -188,8 +191,8 @@ export function App() {
           burstRef.current?.burst(
             dropX,
             dropY,
-            targetPerson === 'leeo' ? '#00F0FF' : '#FF2E93',
-            '#FFB84D'
+            targetPerson === 'leeo' ? '#E6DCE8' : '#E07AB0',
+            '#F09AC6'
           );
           showToast(
             `"${current.name}" movida para ${targetPerson === 'leeo' ? 'Leeo' : 'Marii'}.`
@@ -198,6 +201,7 @@ export function App() {
           triggerHaptic('snap');
         }
       }
+      return moved;
     },
     [items, moveOrReorderItem, showToast]
   );
@@ -207,13 +211,19 @@ export function App() {
       burstRef.current?.burst(
         x,
         y,
-        person === 'leeo' ? '#00F0FF' : '#FF2E93',
-        '#FFB84D'
+        person === 'leeo' ? '#E6DCE8' : '#E07AB0',
+        '#F09AC6'
       );
       handleOpenNewFor(person);
     },
     [handleOpenNewFor]
   );
+
+  const handleFabTapHint = useCallback(() => {
+    setHintPulse(true);
+    window.setTimeout(() => setHintPulse(false), 650);
+    showToast('Arraste o + para Leeo ou Marii para criar uma task.');
+  }, [showToast]);
 
   const handleCopyList = useCallback(async () => {
     const text = await generateExportAsync();
@@ -235,23 +245,16 @@ export function App() {
 
   return (
     <div className="h-[100dvh] w-full flex items-center justify-center overflow-hidden">
-      {/* Moldura Mobile-Only (100% tela cheia no celular; centralizada estilo app no desktop) */}
+      {/* Moldura Mobile-Only */}
       <div
         ref={shellRef}
-        className="relative w-full max-w-[430px] h-[100dvh] sm:h-[min(100dvh,900px)] sm:rounded-[34px] sm:border sm:border-[var(--vice-border-strong)] sm:shadow-[0_24px_80px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden"
+        className="relative w-full max-w-[430px] h-[100dvh] sm:h-[min(100dvh,900px)] sm:rounded-[34px] sm:border sm:border-[var(--vice-border-strong)] sm:shadow-[0_24px_80px_rgba(12,4,18,0.65)] flex flex-col overflow-hidden"
       >
-        {/* Fundo Atmosferico GTA 6 (Day / Sunset / Night pela hora real) */}
-        <ViceAtmosphereBg atmosphere={atmosphere} />
-
-        {/* Canvas GPU-first de explosao neon ao concluir/transferir */}
+        <ViceAtmosphereBg />
         <NeonBurstCanvas ref={burstRef} />
 
-        {/* Camada Interativa Principal */}
         <div className="relative z-10 flex flex-col flex-1 min-h-0">
           <Header
-            atmosphere={atmosphere}
-            preference={preference}
-            onCycleAtmosphere={cycleAtmosphere}
             isSearchOpen={isSearchOpen}
             hasActiveFilters={hasActiveFilters}
             onToggleSearch={() => setIsSearchOpen((prev) => !prev)}
@@ -260,37 +263,40 @@ export function App() {
             onUncheckAll={() => void uncheckAll()}
             onClearAll={() => void clearAllTasks()}
             totalItems={stats.total}
+            completedItems={stats.completed}
             isCloudConfigured={isCloudConfigured}
             isCloudSyncing={isCloudSyncing}
             cloudError={cloudError}
           />
 
-          {/* Barra Expansivel de Busca & Filtros Rapidos */}
+          {/* Barra Expansivel de Busca & Filtros com Mola WAAPI */}
           {isSearchOpen && (
-            <div className="shrink-0 px-3 py-2.5 border-b border-[var(--vice-border)] bg-[var(--vice-shell-bg)] backdrop-blur-md space-y-2">
+            <div
+              ref={searchBarRef}
+              className="shrink-0 px-3 py-2.5 border-b border-[var(--vice-border)] bg-[var(--vice-shell-bg)] space-y-2"
+            >
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--vice-text-muted)] pointer-events-none" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8E7498] pointer-events-none" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Buscar por nome, tag, nota ou mala..."
                   aria-label="Buscar tarefas"
-                  className="w-full pl-9 pr-9 py-2 text-base sm:text-xs rounded-xl border border-[var(--vice-border-strong)] bg-[var(--vice-surface)] text-[var(--vice-text-primary)] placeholder:text-[var(--vice-text-muted)] focus:outline-none focus:border-[#00E5FF]"
+                  className="w-full pl-9 pr-9 py-2 text-base sm:text-xs rounded-xl border border-[var(--vice-border-strong)] bg-[var(--vice-surface)] text-[#F3ECF5] placeholder:text-[#8E7498] focus:outline-none focus:border-[#E07AB0]"
                 />
                 {searchQuery && (
                   <button
                     type="button"
                     onClick={() => setSearchQuery('')}
                     aria-label="Limpar busca"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--vice-text-muted)]"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#8E7498]"
                   >
                     <X className="w-4 h-4" />
                   </button>
                 )}
               </div>
 
-              {/* Chips horizontais rapidos */}
               <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
                 {(['all', 'pending', 'completed'] as FilterStatus[]).map((st) => (
                   <button
@@ -302,8 +308,8 @@ export function App() {
                     }}
                     className={`px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap border ${
                       statusFilter === st
-                        ? 'border-[#00E5FF] bg-[#00E5FF]/20 text-[#00E5FF]'
-                        : 'border-[var(--vice-border)] bg-[var(--vice-surface-subtle)] text-[var(--vice-text-secondary)]'
+                        ? 'border-[#ECE3EE]/80 pearl-highlight-bar'
+                        : 'border-[var(--vice-border)] bg-[var(--vice-surface-subtle)] text-[#C7B4CE]'
                     }`}
                   >
                     {st === 'all' ? 'Todas' : st === 'pending' ? 'Pendentes' : 'Prontas'}
@@ -318,8 +324,8 @@ export function App() {
                   }}
                   className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap border ${
                     priorityFilter === 'urgent'
-                      ? 'border-[#FF3B5C] bg-[#FF3B5C]/20 text-[#FF3B5C]'
-                      : 'border-[var(--vice-border)] bg-[var(--vice-surface-subtle)] text-[var(--vice-text-secondary)]'
+                      ? 'border-[#F09AC6] bg-[#E07AB0]/25 text-[#F09AC6]'
+                      : 'border-[var(--vice-border)] bg-[var(--vice-surface-subtle)] text-[#C7B4CE]'
                   }`}
                 >
                   <Flame className="w-3 h-3" />
@@ -336,8 +342,8 @@ export function App() {
                     }}
                     className={`px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap border ${
                       bagFilter === id
-                        ? 'border-[#FF2E93] bg-[#FF2E93]/20 text-[#FF4DA6]'
-                        : 'border-[var(--vice-border)] bg-[var(--vice-surface-subtle)] text-[var(--vice-text-secondary)]'
+                        ? 'border-[#E07AB0] bg-[#E07AB0]/25 text-[#F09AC6]'
+                        : 'border-[var(--vice-border)] bg-[var(--vice-surface-subtle)] text-[#C7B4CE]'
                     }`}
                   >
                     {label}
@@ -348,7 +354,7 @@ export function App() {
                   <button
                     type="button"
                     onClick={clearFilters}
-                    className="px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap text-[#FFB84D]"
+                    className="px-2.5 py-1 rounded-full text-[10px] font-bold whitespace-nowrap text-[#E6DCE8]"
                   >
                     Limpar
                   </button>
@@ -357,7 +363,7 @@ export function App() {
             </div>
           )}
 
-          {/* PALCO MEIO A MEIO 50/50 COM DIVISOR CENTRAL NEON ARRASTAVEL */}
+          {/* PALCO MEIO A MEIO 50/50 COM DIVISOR CENTRAL ARRASTAVEL */}
           <SplitStage
             leeoItems={leeoItems}
             mariiItems={mariiItems}
@@ -365,7 +371,6 @@ export function App() {
             snapMode={snapMode}
             onSnapModeChange={setSnapMode}
             fabHoverTarget={fabHoverTarget}
-            onAdd={handleOpenNewFor}
             onToggle={handleToggle}
             onCustomize={handleOpenCustomize}
             onRemove={handleRemove}
@@ -375,30 +380,29 @@ export function App() {
           />
         </div>
 
-        {/* BOTAO "+" FLUTUANTE MAGNETICO ARRASTAVEL */}
+        {/* UNICO BOTAO "+" INFERIOR ATIVADO EXCLUSIVAMENTE POR ARRASTE */}
         <ViceFab
           containerRef={shellRef}
           splitRatio={splitRatio}
           hoverTarget={fabHoverTarget}
+          hintPulse={hintPulse}
           onHoverTargetChange={setFabHoverTarget}
-          onTap={() =>
-            handleOpenNewFor(snapMode === 'marii' ? 'marii' : 'leeo')
-          }
+          onTapHint={handleFabTapHint}
           onDropOnPerson={handleFabDropOnPerson}
         />
 
-        {/* ESTUDIO DE CRIACAO E CUSTOMIZACAO ABSURDA */}
+        {/* GAVETA DE CRIACAO E DEDUCAO SILENCIOSA */}
         <TaskStudioSheet
           isOpen={studioOpen}
           editingItem={editingItem}
           initialPerson={studioInitialPerson}
+          deduceTaskAsync={deduceTaskAsync}
           onClose={handleCloseStudio}
           onSaveNew={handleSaveNew}
           onSaveEdit={handleSaveEdit}
           onDelete={handleRemove}
         />
 
-        {/* TOAST VICE COM AUTO-DISMISS E UNDO */}
         <Toast
           message={toast?.message ?? null}
           actionLabel={toast?.actionLabel}

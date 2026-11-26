@@ -21,7 +21,7 @@ interface Particle {
 const POOL_SIZE = 56;
 
 /**
- * Canvas leve com pool pre-alocado de particulas geometricas neon.
+ * Canvas leve com pool pre-alocado de particulas geometricas na paleta da imagem.
  * Zero alocacao de objetos no loop RAF, 0% CPU quando inativo, zero emojis.
  */
 export const NeonBurstCanvas = forwardRef<NeonBurstHandle>((_, ref) => {
@@ -39,7 +39,7 @@ export const NeonBurstCanvas = forwardRef<NeonBurstHandle>((_, ref) => {
       size: 4,
       life: 0,
       maxLife: 0.45,
-      color: '#00F0FF',
+      color: '#E07AB0',
       rotation: 0,
       vRot: 0,
     }))
@@ -115,7 +115,6 @@ export const NeonBurstCanvas = forwardRef<NeonBurstHandle>((_, ref) => {
       ctx.translate(p.x, p.y);
       ctx.rotate(p.rotation);
       ctx.fillStyle = p.color;
-      // Losango geometrico neon estilo Vice
       ctx.beginPath();
       ctx.moveTo(0, -s);
       ctx.lineTo(s * 0.65, 0);
@@ -136,7 +135,7 @@ export const NeonBurstCanvas = forwardRef<NeonBurstHandle>((_, ref) => {
   };
 
   useImperativeHandle(ref, () => ({
-    burst(clientX, clientY, primaryColor, secondaryColor = '#FFB84D') {
+    burst(clientX, clientY, primaryColor, secondaryColor = '#E6DCE8') {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();

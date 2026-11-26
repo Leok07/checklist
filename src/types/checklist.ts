@@ -22,13 +22,11 @@ export type CardStyle = 'glass' | 'neon' | 'gradient' | 'solid';
 
 export type AccentColorId =
   | 'auto'
-  | 'cyan'
-  | 'magenta'
-  | 'sunset'
-  | 'gold'
-  | 'violet'
-  | 'mint'
-  | 'crimson';
+  | 'pearl'
+  | 'rose'
+  | 'blush'
+  | 'orchid'
+  | 'mauve';
 
 export type TaskIconId =
   | 'sparkles'
@@ -92,10 +90,6 @@ export interface ChecklistItem {
 export type TaskDraft = Omit<ChecklistItem, 'id' | 'completed' | 'createdAt' | 'order'>;
 
 export type FilterStatus = 'all' | 'pending' | 'completed';
-
-export type ViceAtmosphere = 'day' | 'sunset' | 'night';
-
-export type AtmospherePreference = 'auto' | ViceAtmosphere;
 
 export type SplitSnapMode = 'leeo' | 'even' | 'marii';
 

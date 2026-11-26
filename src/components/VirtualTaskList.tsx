@@ -1,18 +1,16 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus } from 'lucide-react';
 import { ChecklistItem, PersonAssignment } from '../types/checklist';
 import { CardDensity, ItemCard } from './ItemCard';
 import { CardDragPayload } from '../motion/useSwipeAndDragCard';
-import { triggerHaptic } from '../motion/haptics';
 
 interface VirtualTaskListProps {
   person: PersonAssignment;
   items: ChecklistItem[];
   density: CardDensity;
   draggedItemId: string | null;
+  justLandedId: string | null;
   dropInsertIndex: number | null;
   scrollContainerRef: (el: HTMLDivElement | null) => void;
-  onAdd: (person: PersonAssignment) => void;
   onToggle: (id: string, x: number, y: number) => void;
   onCustomize: (item: ChecklistItem) => void;
   onRemove: (id: string) => void;
@@ -33,9 +31,7 @@ function getEstimatedHeight(density: CardDensity): number {
 }
 
 /**
- * Lista virtualizada de alta fluidez:
- * - Para <= 28 tarefas: fluxo nativo leve com contain: layout style e indicador de drop GPU
- * - Para > 28 tarefas: windowing real com RAF scroll throttle e posicionamento GPU translate3d
+ * Lista virtualizada de alta fluidez sem botoes "+" no centro.
  */
 export const VirtualTaskList: React.FC<VirtualTaskListProps> = React.memo(
   ({
@@ -43,9 +39,9 @@ export const VirtualTaskList: React.FC<VirtualTaskListProps> = React.memo(
     items,
     density,
     draggedItemId,
+    justLandedId,
     dropInsertIndex,
     scrollContainerRef,
-    onAdd,
     onToggle,
     onCustomize,
     onRemove,
@@ -115,11 +111,11 @@ export const VirtualTaskList: React.FC<VirtualTaskListProps> = React.memo(
       return {
         visibleStart: start,
         visibleEnd: end,
-        totalHeight: items.length * stride + 92,
+        totalHeight: items.length * stride + 96,
       };
     }, [isVirtualized, items.length, scrollState.scrollTop, scrollState.viewportHeight, stride]);
 
-    const accentColor = person === 'leeo' ? 'var(--vice-leeo)' : 'var(--vice-marii)';
+    const accentColor = person === 'leeo' ? '#E6DCE8' : '#E07AB0';
 
     if (items.length === 0) {
       return (
@@ -127,26 +123,14 @@ export const VirtualTaskList: React.FC<VirtualTaskListProps> = React.memo(
           ref={setRefs}
           className="flex-1 overflow-y-auto scrollbar-none px-2 pb-24 pt-4 flex flex-col items-center justify-center text-center"
         >
-          <div className="rounded-2xl border border-dashed border-[var(--vice-border-strong)] bg-[var(--vice-surface-subtle)] p-3.5 w-full max-w-[180px] space-y-2.5">
-            <p className="text-[11px] font-medium text-[var(--vice-text-muted)] leading-snug">
+          <div className="rounded-2xl border border-dashed border-[var(--vice-border)] bg-[var(--vice-surface-subtle)] px-3 py-4 w-full max-w-[172px]">
+            <p className="text-[11px] font-medium text-[#8E7498] leading-snug">
               {density === 'rail'
                 ? 'Vazio'
                 : person === 'leeo'
-                ? 'Nenhuma task para Leeo'
-                : 'Nenhuma task para Marii'}
+                ? 'Arraste o + para a esquerda para criar'
+                : 'Arraste o + para a direita para criar'}
             </p>
-            <button
-              type="button"
-              onClick={() => {
-                triggerHaptic('tap');
-                onAdd(person);
-              }}
-              className="w-full inline-flex items-center justify-center gap-1 py-2 px-2.5 rounded-xl text-[11px] font-bold text-[#080412] active:scale-95 transition-transform"
-              style={{ backgroundColor: accentColor }}
-            >
-              <Plus className="w-3.5 h-3.5 stroke-[2.75]" />
-              {density !== 'rail' && <span>Criar</span>}
-            </button>
           </div>
         </div>
       );
@@ -185,6 +169,7 @@ export const VirtualTaskList: React.FC<VirtualTaskListProps> = React.memo(
                     item={item}
                     density={density}
                     isBeingDragged={draggedItemId === item.id}
+                    justLanded={justLandedId === item.id}
                     onToggle={onToggle}
                     onCustomize={onCustomize}
                     onRemove={onRemove}
@@ -222,6 +207,7 @@ export const VirtualTaskList: React.FC<VirtualTaskListProps> = React.memo(
               item={item}
               density={density}
               isBeingDragged={draggedItemId === item.id}
+              justLanded={justLandedId === item.id}
               onToggle={onToggle}
               onCustomize={onCustomize}
               onRemove={onRemove}

@@ -6,6 +6,13 @@ import {
   SPRING_SNAPPY,
   SpringChannel,
 } from './springEngine';
+import {
+  animateSpringFlyOutX,
+  animateSpringScalePop,
+  animateSpringTranslateX,
+  cancelWaapiSpring,
+  readActiveSpringState,
+} from './waapiSpring';
 import { triggerHaptic } from './haptics';
 
 export interface CardDragPayload {
@@ -44,11 +51,11 @@ function applyRubberBand(dx: number, limit: number): number {
 }
 
 /**
- * Reconhecedor unificado de gestos 120fps com zero alocacoes no pointermove:
- * - Toque curto: conclui / desmarca com squish instantaneo
- * - Swipe direita: conclui com mola elastica
- * - Swipe esquerda (estagio 1): abre Estudio de Customizacao
- * - Swipe esquerda (estagio 2): exclui com feedback haptico
+ * Reconhecedor unificado de gestos 120fps com animacoes assincronas WAAPI na soltura:
+ * - Toque curto: conclui / desmarca com mola elastica no compositor
+ * - Swipe direita: conclui com retorno elastico assincrono
+ * - Swipe esquerda (estagio 1): abre Estudio de Customizacao + retorno com mola
+ * - Swipe esquerda (estagio 2): fly-out com mola herdando velocidade antes de remover
  * - Segurar 230ms + arrastar: drag-and-drop livre (cruzar divisor ou reordenar)
  */
 export function useSwipeAndDragCard({
@@ -67,10 +74,8 @@ export function useSwipeAndDragCard({
   const leftRevealRef = useRef<HTMLDivElement | null>(null);
   const deleteHintRef = useRef<HTMLDivElement | null>(null);
 
-  const springXRef = useRef<SpringChannel | null>(null);
   const springScaleRef = useRef<SpringChannel | null>(null);
 
-  // Estado mutavel pre-alocado para evitar GC pauses durante gestos continuos
   const stateRef = useRef({
     mode: 'idle' as GestureMode,
     pointerId: -1,
@@ -109,6 +114,12 @@ export function useSwipeAndDragCard({
     onDragEnd,
   };
 
+  const resetReveals = useCallback(() => {
+    if (rightRevealRef.current) rightRevealRef.current.style.opacity = '0';
+    if (leftRevealRef.current) leftRevealRef.current.style.opacity = '0';
+    if (deleteHintRef.current) deleteHintRef.current.style.opacity = '0';
+  }, []);
+
   const applyTransform = useCallback(() => {
     const el = surfaceRef.current;
     if (!el) return;
@@ -122,7 +133,6 @@ export function useSwipeAndDragCard({
       el.style.transform = `translate3d(${x.toFixed(2)}px, 0, 0) scale3d(${sc.toFixed(4)}, ${sc.toFixed(4)}, 1)`;
     }
 
-    // Atualiza camadas de acao via opacity GPU-only
     const rightEl = rightRevealRef.current;
     if (rightEl) {
       const ratio = x > 4 ? Math.min(1, x / SWIPE_COMPLETE_THRESHOLD) : 0;
@@ -143,20 +153,6 @@ export function useSwipeAndDragCard({
   }, []);
 
   useEffect(() => {
-    const springX = createSpringChannel(
-      0,
-      SPRING_BOUNCY,
-      (val) => {
-        stateRef.current.currentX = val;
-        applyTransform();
-      },
-      () => {
-        if (stateRef.current.mode === 'idle' && !springScaleRef.current?.active) {
-          setSurgicalWillChange(surfaceRef.current, false);
-        }
-      }
-    );
-
     const springScale = createSpringChannel(
       1,
       SPRING_SNAPPY,
@@ -165,21 +161,20 @@ export function useSwipeAndDragCard({
         applyTransform();
       },
       () => {
-        if (stateRef.current.mode === 'idle' && !springXRef.current?.active) {
+        if (stateRef.current.mode === 'idle') {
           setSurgicalWillChange(surfaceRef.current, false);
         }
       }
     );
 
-    springXRef.current = springX;
     springScaleRef.current = springScale;
 
     return () => {
       if (stateRef.current.holdTimer !== null) {
         window.clearTimeout(stateRef.current.holdTimer);
       }
-      springX.stop();
       springScale.stop();
+      cancelWaapiSpring(surfaceRef.current);
       setSurgicalWillChange(surfaceRef.current, false);
     };
   }, [applyTransform]);
@@ -195,7 +190,6 @@ export function useSwipeAndDragCard({
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (disabled || e.button > 0) return;
-      // Nao intercepta botoes internos (ex.: stepper, sub-task, editar)
       const target = e.target as HTMLElement | null;
       if (target && target.closest('button, input, select, textarea, [data-no-gesture="true"]')) {
         return;
@@ -204,14 +198,20 @@ export function useSwipeAndDragCard({
       const s = stateRef.current;
       clearHoldTimer();
 
-      // 100% interrompivel: captura posicao atual se a mola ainda estiver em movimento
+      // Interrupcao 100% suave de qualquer mola WAAPI em andamento no card
+      const interruptedX = readActiveSpringState(surfaceRef.current, 'tx');
+      if (interruptedX) {
+        s.currentX = interruptedX.value;
+      }
+      cancelWaapiSpring(surfaceRef.current);
+
       s.mode = 'pending';
       s.pointerId = e.pointerId;
       s.startX = e.clientX - s.currentX;
       s.startY = e.clientY;
       s.lastX = e.clientX;
       s.lastTime = performance.now();
-      s.vx = 0;
+      s.vx = interruptedX ? interruptedX.velocity : 0;
       s.dx = s.currentX;
       s.crossedComplete = false;
       s.crossedDelete = false;
@@ -219,8 +219,7 @@ export function useSwipeAndDragCard({
       s.pendingClientY = e.clientY;
 
       setSurgicalWillChange(surfaceRef.current, true, 'transform');
-      springXRef.current?.stop();
-      springScaleRef.current?.setTarget(0.97);
+      springScaleRef.current?.setTarget(0.96);
 
       if (callbacksRef.current.onDragStart) {
         const currentTargetEl = e.currentTarget;
@@ -229,11 +228,14 @@ export function useSwipeAndDragCard({
           stateRef.current.mode = 'drag';
           triggerHaptic('lift');
           springScaleRef.current?.setTarget(1);
-          springXRef.current?.setImmediate(0);
+          stateRef.current.currentX = 0;
+          stateRef.current.dx = 0;
+          applyTransform();
+          resetReveals();
           try {
             currentTargetEl.setPointerCapture(stateRef.current.pointerId);
           } catch {
-            // Ignora se o ponteiro nao estiver ativo
+            // Ignora
           }
           const rect = currentTargetEl.getBoundingClientRect();
           callbacksRef.current.onDragStart?.({
@@ -246,92 +248,100 @@ export function useSwipeAndDragCard({
         }, HOLD_DRAG_MS);
       }
     },
-    [disabled, itemId]
+    [applyTransform, disabled, itemId, resetReveals]
   );
 
-  const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const s = stateRef.current;
-    if (s.mode === 'idle' || s.mode === 'scroll' || e.pointerId !== s.pointerId) return;
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const s = stateRef.current;
+      if (s.mode === 'idle' || s.mode === 'scroll' || e.pointerId !== s.pointerId) return;
 
-    const now = performance.now();
-    const dt = Math.max(0.004, (now - s.lastTime) / 1000);
-    const rawVx = (e.clientX - s.lastX) / dt;
-    // Suavizacao exponencial leve para velocidade limpa na soltura
-    s.vx = s.vx * 0.65 + rawVx * 0.35;
-    s.lastX = e.clientX;
-    s.lastTime = now;
-    s.pendingClientX = e.clientX;
-    s.pendingClientY = e.clientY;
+      const now = performance.now();
+      const dt = Math.max(0.004, (now - s.lastTime) / 1000);
+      const rawVx = (e.clientX - s.lastX) / dt;
+      s.vx = s.vx * 0.65 + rawVx * 0.35;
+      s.lastX = e.clientX;
+      s.lastTime = now;
+      s.pendingClientX = e.clientX;
+      s.pendingClientY = e.clientY;
 
-    const rawDx = e.clientX - s.startX;
-    const rawDy = e.clientY - s.startY;
+      const rawDx = e.clientX - s.startX;
+      const rawDy = e.clientY - s.startY;
 
-    if (s.mode === 'pending') {
-      if (Math.abs(rawDx) < 8 && Math.abs(rawDy) < 8) return;
-      clearHoldTimer();
+      if (s.mode === 'pending') {
+        if (Math.abs(rawDx) < 8 && Math.abs(rawDy) < 8) return;
+        clearHoldTimer();
 
-      if (Math.abs(rawDy) > Math.abs(rawDx) * 1.15) {
-        s.mode = 'scroll';
+        if (Math.abs(rawDy) > Math.abs(rawDx) * 1.15) {
+          s.mode = 'scroll';
+          springScaleRef.current?.setTarget(1);
+          if (Math.abs(s.currentX) > 0.5) {
+            const fromX = s.currentX;
+            s.currentX = 0;
+            s.dx = 0;
+            animateSpringTranslateX(surfaceRef.current, fromX, 0, 0, SPRING_BOUNCY, resetReveals);
+          }
+          return;
+        }
+
+        s.mode = 'swipe';
         springScaleRef.current?.setTarget(1);
-        springXRef.current?.setTarget(0);
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          // Ignora
+        }
+      }
+
+      if (s.mode === 'drag') {
+        if (!s.rafPending) {
+          s.rafPending = true;
+          window.requestAnimationFrame(() => {
+            stateRef.current.rafPending = false;
+            if (stateRef.current.mode === 'drag') {
+              callbacksRef.current.onDragMove?.(
+                stateRef.current.pendingClientX,
+                stateRef.current.pendingClientY,
+                stateRef.current.vx
+              );
+            }
+          });
+        }
         return;
       }
 
-      s.mode = 'swipe';
-      springScaleRef.current?.setTarget(1);
-      try {
-        e.currentTarget.setPointerCapture(e.pointerId);
-      } catch {
-        // Ignora
-      }
-    }
+      if (s.mode === 'swipe') {
+        const damped = applyRubberBand(rawDx, 138);
+        s.dx = damped;
 
-    if (s.mode === 'drag') {
-      if (!s.rafPending) {
-        s.rafPending = true;
-        window.requestAnimationFrame(() => {
-          stateRef.current.rafPending = false;
-          if (stateRef.current.mode === 'drag') {
-            callbacksRef.current.onDragMove?.(
-              stateRef.current.pendingClientX,
-              stateRef.current.pendingClientY,
-              stateRef.current.vx
-            );
-          }
-        });
-      }
-      return;
-    }
+        if (damped >= SWIPE_COMPLETE_THRESHOLD && !s.crossedComplete) {
+          s.crossedComplete = true;
+          triggerHaptic('tap');
+        } else if (damped < SWIPE_COMPLETE_THRESHOLD) {
+          s.crossedComplete = false;
+        }
 
-    if (s.mode === 'swipe') {
-      const damped = applyRubberBand(rawDx, 138);
-      s.dx = damped;
+        if (damped <= SWIPE_DELETE_THRESHOLD && !s.crossedDelete) {
+          s.crossedDelete = true;
+          triggerHaptic('snap');
+        } else if (damped > SWIPE_DELETE_THRESHOLD) {
+          s.crossedDelete = false;
+        }
 
-      if (damped >= SWIPE_COMPLETE_THRESHOLD && !s.crossedComplete) {
-        s.crossedComplete = true;
-        triggerHaptic('tap');
-      } else if (damped < SWIPE_COMPLETE_THRESHOLD) {
-        s.crossedComplete = false;
+        if (!s.rafPending) {
+          s.rafPending = true;
+          window.requestAnimationFrame(() => {
+            stateRef.current.rafPending = false;
+            if (stateRef.current.mode === 'swipe') {
+              stateRef.current.currentX = stateRef.current.dx;
+              applyTransform();
+            }
+          });
+        }
       }
-
-      if (damped <= SWIPE_DELETE_THRESHOLD && !s.crossedDelete) {
-        s.crossedDelete = true;
-        triggerHaptic('snap');
-      } else if (damped > SWIPE_DELETE_THRESHOLD) {
-        s.crossedDelete = false;
-      }
-
-      if (!s.rafPending) {
-        s.rafPending = true;
-        window.requestAnimationFrame(() => {
-          stateRef.current.rafPending = false;
-          if (stateRef.current.mode === 'swipe') {
-            springXRef.current?.setImmediate(stateRef.current.dx, stateRef.current.vx);
-          }
-        });
-      }
-    }
-  }, []);
+    },
+    [applyTransform, resetReveals]
+  );
 
   const finishGesture = useCallback(
     (e: React.PointerEvent<HTMLDivElement>, cancelled: boolean) => {
@@ -340,8 +350,12 @@ export function useSwipeAndDragCard({
 
       clearHoldTimer();
       const prevMode = s.mode;
+      const fromX = s.currentX;
+      const vx = s.vx;
       s.mode = 'idle';
       s.pointerId = -1;
+      s.currentX = 0;
+      s.dx = 0;
 
       try {
         if (e.currentTarget.hasPointerCapture(e.pointerId)) {
@@ -351,44 +365,73 @@ export function useSwipeAndDragCard({
         // Ignora
       }
 
-      springScaleRef.current?.setTarget(1);
-
       if (prevMode === 'drag') {
+        springScaleRef.current?.setTarget(1);
         callbacksRef.current.onDragEnd?.(e.clientX, e.clientY);
         return;
       }
 
       if (prevMode === 'pending' && !cancelled) {
+        springScaleRef.current?.stop();
+        s.currentScale = 1;
         triggerHaptic('check');
+        animateSpringScalePop(surfaceRef.current, 0.93, 3.6);
         callbacksRef.current.onTapToggle(itemId, e.clientX, e.clientY);
         return;
       }
 
+      springScaleRef.current?.setTarget(1);
+
       if (prevMode === 'swipe' && !cancelled) {
-        const dx = s.dx;
-        if (dx >= SWIPE_COMPLETE_THRESHOLD) {
+        if (fromX >= SWIPE_COMPLETE_THRESHOLD) {
           triggerHaptic('check');
           callbacksRef.current.onSwipeComplete(itemId, e.clientX, e.clientY);
-          springXRef.current?.setTarget(0, Math.min(0, s.vx * 0.25));
+          animateSpringTranslateX(
+            surfaceRef.current,
+            fromX,
+            0,
+            Math.min(0, vx * 0.3),
+            SPRING_BOUNCY,
+            resetReveals
+          );
           return;
         }
-        if (dx <= SWIPE_DELETE_THRESHOLD) {
+
+        if (fromX <= SWIPE_DELETE_THRESHOLD) {
           triggerHaptic('delete');
-          callbacksRef.current.onSwipeDelete(itemId);
+          animateSpringFlyOutX(surfaceRef.current, fromX, -380, vx, () => {
+            resetReveals();
+            callbacksRef.current.onSwipeDelete(itemId);
+          });
           return;
         }
-        if (dx <= SWIPE_EDIT_THRESHOLD) {
+
+        if (fromX <= SWIPE_EDIT_THRESHOLD) {
           triggerHaptic('tap');
           callbacksRef.current.onSwipeEdit(itemId);
-          springXRef.current?.setTarget(0, Math.max(0, s.vx * 0.25));
+          animateSpringTranslateX(
+            surfaceRef.current,
+            fromX,
+            0,
+            Math.max(0, vx * 0.3),
+            SPRING_BOUNCY,
+            resetReveals
+          );
           return;
         }
       }
 
-      // Retorno elastico herdando velocidade real do dedo
-      springXRef.current?.setTarget(0, s.vx * 0.35);
+      // Retorno elastico assincrono no compositor herdando velocidade real do dedo
+      animateSpringTranslateX(
+        surfaceRef.current,
+        fromX,
+        0,
+        vx * 0.35,
+        SPRING_BOUNCY,
+        resetReveals
+      );
     },
-    [itemId]
+    [itemId, resetReveals]
   );
 
   const onPointerUp = useCallback(

@@ -2,79 +2,30 @@
 @tailwind components;
 @tailwind utilities;
 
-:root,
-[data-vice-theme="night"] {
-  --vice-bg-base: #080412;
-  --vice-bg-gradient: radial-gradient(120% 80% at 15% 0%, rgba(0, 240, 255, 0.14) 0%, transparent 55%),
-    radial-gradient(110% 85% at 88% 8%, rgba(255, 46, 147, 0.18) 0%, transparent 55%),
-    radial-gradient(100% 70% at 50% 100%, rgba(168, 85, 247, 0.16) 0%, transparent 60%),
-    linear-gradient(180deg, #080412 0%, #110823 55%, #160B2E 100%);
-  --vice-shell-bg: rgba(14, 7, 29, 0.72);
-  --vice-surface: rgba(24, 14, 46, 0.78);
-  --vice-surface-strong: rgba(29, 17, 56, 0.94);
-  --vice-surface-subtle: rgba(255, 255, 255, 0.05);
-  --vice-border: rgba(255, 255, 255, 0.11);
-  --vice-border-strong: rgba(255, 255, 255, 0.2);
-  --vice-text-primary: #F8FAFC;
-  --vice-text-secondary: #C4B5D9;
-  --vice-text-muted: #8E7EA8;
-  --vice-leeo: #00F0FF;
-  --vice-leeo-soft: rgba(0, 240, 255, 0.14);
-  --vice-marii: #FF2E93;
-  --vice-marii-soft: rgba(255, 46, 147, 0.15);
-  --vice-divider: linear-gradient(180deg, rgba(0, 240, 255, 0.75) 0%, rgba(168, 85, 247, 0.85) 50%, rgba(255, 46, 147, 0.75) 100%);
-  --vice-title-gradient: linear-gradient(95deg, #00F0FF 0%, #FF4DA6 52%, #FFB84D 100%);
-  --vice-sheet-bg: #130A26;
-  --vice-desktop-outer: #05020B;
-}
-
-[data-vice-theme="sunset"] {
-  --vice-bg-base: #1E0D36;
-  --vice-bg-gradient: radial-gradient(120% 75% at 12% 10%, rgba(255, 184, 77, 0.24) 0%, transparent 55%),
-    radial-gradient(110% 80% at 88% 20%, rgba(255, 46, 147, 0.28) 0%, transparent 58%),
-    linear-gradient(180deg, #1A0B2E 0%, #3E154E 38%, #7C2258 72%, #B93F5E 100%);
-  --vice-shell-bg: rgba(34, 13, 54, 0.62);
-  --vice-surface: rgba(45, 18, 66, 0.76);
-  --vice-surface-strong: rgba(54, 21, 78, 0.93);
-  --vice-surface-subtle: rgba(255, 232, 214, 0.08);
-  --vice-border: rgba(255, 184, 140, 0.22);
-  --vice-border-strong: rgba(255, 184, 140, 0.38);
-  --vice-text-primary: #FFF7F2;
-  --vice-text-secondary: #F3D5E3;
-  --vice-text-muted: #D3A4BC;
-  --vice-leeo: #2CE6FF;
-  --vice-leeo-soft: rgba(44, 230, 255, 0.16);
-  --vice-marii: #FF5DA2;
-  --vice-marii-soft: rgba(255, 93, 162, 0.18);
-  --vice-divider: linear-gradient(180deg, rgba(255, 184, 77, 0.9) 0%, rgba(255, 93, 162, 0.9) 50%, rgba(44, 230, 255, 0.85) 100%);
-  --vice-title-gradient: linear-gradient(95deg, #FFE082 0%, #FF7A59 48%, #FF4DA6 100%);
-  --vice-sheet-bg: #240F3A;
-  --vice-desktop-outer: #130722;
-}
-
-[data-vice-theme="day"] {
-  --vice-bg-base: #FFF3E8;
-  --vice-bg-gradient: radial-gradient(110% 70% at 15% 0%, rgba(0, 180, 216, 0.16) 0%, transparent 55%),
-    radial-gradient(110% 75% at 90% 10%, rgba(255, 107, 74, 0.18) 0%, transparent 55%),
-    radial-gradient(100% 60% at 50% 100%, rgba(225, 29, 116, 0.1) 0%, transparent 60%),
-    linear-gradient(180deg, #FFF7F0 0%, #FFEFE3 55%, #FFE7DA 100%);
-  --vice-shell-bg: rgba(255, 250, 246, 0.72);
-  --vice-surface: rgba(255, 255, 255, 0.84);
-  --vice-surface-strong: rgba(255, 255, 255, 0.96);
-  --vice-surface-subtle: rgba(20, 12, 36, 0.05);
-  --vice-border: rgba(30, 16, 52, 0.11);
-  --vice-border-strong: rgba(30, 16, 52, 0.2);
-  --vice-text-primary: #180C2B;
-  --vice-text-secondary: #4D3B68;
-  --vice-text-muted: #7C6A96;
-  --vice-leeo: #0099C2;
-  --vice-leeo-soft: rgba(0, 153, 194, 0.13);
-  --vice-marii: #E11D74;
-  --vice-marii-soft: rgba(225, 29, 116, 0.12);
-  --vice-divider: linear-gradient(180deg, rgba(0, 153, 194, 0.75) 0%, rgba(255, 107, 74, 0.8) 50%, rgba(225, 29, 116, 0.75) 100%);
-  --vice-title-gradient: linear-gradient(95deg, #0099C2 0%, #E11D74 55%, #FF6B4A 100%);
-  --vice-sheet-bg: #FFF9F5;
-  --vice-desktop-outer: #F0DFD3;
+:root {
+  --vice-bg-base: #23102D;
+  --vice-bg-gradient: linear-gradient(168deg, #5B2B5C 0%, #48214D 32%, #36193F 68%, #23102D 100%);
+  --vice-shell-bg: rgba(45, 22, 54, 0.78);
+  --vice-surface: rgba(53, 31, 67, 0.88);
+  --vice-surface-strong: #2B1738;
+  --vice-surface-subtle: rgba(236, 227, 238, 0.06);
+  --vice-border: rgba(232, 214, 238, 0.14);
+  --vice-border-strong: rgba(232, 214, 238, 0.26);
+  --vice-text-primary: #F3ECF5;
+  --vice-text-secondary: #C7B4CE;
+  --vice-text-muted: #8E7498;
+  --vice-leeo: #E6DCE8;
+  --vice-leeo-ink: #22122A;
+  --vice-leeo-soft: rgba(230, 220, 232, 0.16);
+  --vice-leeo-bar: linear-gradient(90deg, #ECE3EE 0%, #D3C3D8 65%, #9E8AA6 100%);
+  --vice-marii: #E07AB0;
+  --vice-marii-blush: #F09AC6;
+  --vice-marii-soft: rgba(224, 122, 176, 0.18);
+  --vice-marii-bar: linear-gradient(90deg, #E07AB0 0%, #F09AC6 100%);
+  --vice-rose-track: #6A416C;
+  --vice-divider: linear-gradient(180deg, rgba(230, 220, 232, 0.45) 0%, rgba(224, 122, 176, 0.65) 50%, rgba(176, 107, 163, 0.4) 100%);
+  --vice-sheet-bg: #2A1636;
+  --vice-desktop-outer: #1A0C22;
 }
 
 @layer base {
@@ -100,13 +51,18 @@
 }
 
 .vice-title-text {
-  background-image: var(--vice-title-gradient);
+  background-image: linear-gradient(95deg, #F3ECF5 0%, #E6DCE8 55%, #F09AC6 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
-/* Scrollbar invisível com rolagem nativa 120Hz */
+.pearl-highlight-bar {
+  background: linear-gradient(90deg, #ECE3EE 0%, #D3C3D8 60%, #9E8AA6 100%);
+  color: #22122A;
+}
+
+/* Scrollbar invisivel com rolagem nativa 120Hz */
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }
@@ -116,12 +72,12 @@
   -webkit-overflow-scrolling: touch;
 }
 
-/* Contenção de layout/paint para listas e cards GPU-first */
+/* Contencao de layout/paint para listas e cards GPU-first */
 .gpu-card-contain {
   contain: layout style;
 }
 
-/* Animação estritamente GPU-only (somente opacity) para aura de prioridade urgente */
+/* Animacao estritamente GPU-only (somente opacity) para aura de prioridade urgente */
 @keyframes viceUrgentOpacityPulse {
   0%, 100% {
     opacity: 0.35;
@@ -135,7 +91,7 @@
   animation: viceUrgentOpacityPulse 2.2s ease-in-out infinite;
 }
 
-/* Safe area padding utilitário para iPhones com notch/home indicator */
+/* Safe area padding utilitario para iPhones com notch/home indicator */
 .pt-safe {
   padding-top: max(12px, env(safe-area-inset-top));
 }

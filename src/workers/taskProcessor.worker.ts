@@ -1,10 +1,11 @@
-import { ChecklistItem, ChecklistStats } from '../types/checklist';
+import { ChecklistItem, ChecklistStats, PersonAssignment } from '../types/checklist';
 import {
   TaskFilterCriteria,
   buildExportText,
   computeTaskStats,
   filterAndPartitionTasks,
 } from './taskProcessingCore';
+import { TaskDeduction, deduceTaskCustomization } from './taskDeductor';
 
 export type WorkerInboundMessage =
   | {
@@ -18,6 +19,12 @@ export type WorkerInboundMessage =
       requestId: number;
       items: ChecklistItem[];
       stats: ChecklistStats;
+    }
+  | {
+      type: 'deduce';
+      requestId: number;
+      text: string;
+      assignedTo: PersonAssignment;
     };
 
 export type WorkerOutboundMessage =
@@ -32,6 +39,11 @@ export type WorkerOutboundMessage =
       type: 'exported';
       requestId: number;
       text: string;
+    }
+  | {
+      type: 'deduced';
+      requestId: number;
+      deduction: TaskDeduction;
     };
 
 self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
@@ -57,6 +69,17 @@ self.onmessage = (event: MessageEvent<WorkerInboundMessage>) => {
       type: 'exported',
       requestId: msg.requestId,
       text,
+    };
+    self.postMessage(response);
+    return;
+  }
+
+  if (msg.type === 'deduce') {
+    const deduction = deduceTaskCustomization(msg.text, msg.assignedTo);
+    const response: WorkerOutboundMessage = {
+      type: 'deduced',
+      requestId: msg.requestId,
+      deduction,
     };
     self.postMessage(response);
   }
